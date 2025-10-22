@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { SafeAreaView, View, Text, TextInput, ScrollView, Pressable, StatusBar, Modal } from 'react-native';
+import { SafeAreaView, View, Text, TextInput, ScrollView, Pressable, StatusBar, Modal, Alert, ActivityIndicator } from 'react-native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-
-// Solo UI: sin lógica de submit ni autenticación.
-// Inspirado en el Login.jsx web y la imagen referencial, adaptado a móvil con NativeWind.
+import { LinearGradient } from 'expo-linear-gradient';
+import { authService } from '../../services/authService';
+import { formatRutForDisplay, formatRutForAPI, isValidRut, getRutErrorMessage } from '../../helpers/rutFormatter';
 
 const baseUsers = [
   {
@@ -32,13 +32,101 @@ const baseUsers = [
   },
 ];
 
-export default function LoginScreen() {
+export default function LoginScreen({ onLoginSuccess }) {
   const [showBaseUsers, setShowBaseUsers] = useState(false);
   const [run, setRun] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [errors, setErrors] = useState({ run: '', password: '' });
+
+  // Manejar cambio de RUT con formateo automático
+  const handleRunChange = (text) => {
+    const formatted = formatRutForDisplay(text);
+    setRun(formatted);
+    if (errors.run) setErrors({ ...errors, run: '' });
+  };
+
+  // Manejar inicio de sesión
+  const handleLogin = async () => {
+    // Resetear errores
+    setErrors({ run: '', password: '' });
+
+    // Validaciones
+    let hasErrors = false;
+    const newErrors = { run: '', password: '' };
+
+    // Validar RUT usando el helper
+    const rutError = getRutErrorMessage(run);
+    if (rutError) {
+      newErrors.run = rutError;
+      hasErrors = true;
+    }
+
+    if (!password.trim()) {
+      newErrors.password = 'La contraseña es requerida';
+      hasErrors = true;
+    } else if (password.length < 6) {
+      newErrors.password = 'La contraseña debe tener al menos 6 caracteres';
+      hasErrors = true;
+    }
+
+    if (hasErrors) {
+      setErrors(newErrors);
+      return;
+    }
+
+    // Formatear RUT para enviar a la API (sin puntos, solo guión)
+    const formattedRutForAPI = formatRutForAPI(run);
+
+    // Intentar iniciar sesión
+    setIsLoading(true);
+    try {
+      const response = await authService.login(formattedRutForAPI, password);
+
+      // Éxito -> informar al contenedor (App) para navegar a Home
+      if (typeof onLoginSuccess === 'function') {
+        onLoginSuccess(response);
+      }
+      
+      // Mensaje opcional de éxito
+      Alert.alert('Inicio de sesión exitoso', `Bienvenido ${response.user?.nombres || 'Usuario'}`);
+    } catch (error) {
+      console.error('Error en login:', error);
+      
+      let errorMessage = 'No se pudo conectar con el servidor. Verifica tu conexión.';
+      
+      if (error.response) {
+        // El servidor respondió con un error
+        switch (error.response.status) {
+          case 401:
+            errorMessage = 'RUT o contraseña incorrectos';
+            break;
+          case 403:
+            errorMessage = 'Usuario inactivo o sin permisos';
+            break;
+          case 404:
+            errorMessage = 'Usuario no encontrado';
+            break;
+          case 500:
+            errorMessage = 'Error del servidor. Intenta más tarde.';
+            break;
+          default:
+            errorMessage = error.response.data?.message || 'Error al iniciar sesión';
+        }
+      } else if (error.request) {
+        errorMessage = 'No se pudo conectar con el servidor. Verifica que la API esté corriendo en localhost:3000';
+      }
+
+      Alert.alert('Error de autenticación', errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const selectBaseUser = (user) => {
-    setRun(user.run);
+    // Formatear el RUT automáticamente al seleccionar
+    setRun(formatRutForDisplay(user.run));
     setPassword(user.password);
     setShowBaseUsers(false);
   };
@@ -71,21 +159,26 @@ export default function LoginScreen() {
                 <Text className="text-sm font-semibold text-gray-700">
                   RUT <Text className="text-rose-500">*</Text>
                 </Text>
-                <View className="mt-3 flex-row items-center rounded-2xl border border-blue-100 bg-blue-50">
+                <View className={`mt-3 flex-row items-center rounded-2xl border ${errors.run ? 'border-rose-300 bg-rose-50' : 'border-blue-100 bg-blue-50'}`}>
                   <View className="h-16 w-16 items-center justify-center">
-                    <MaterialCommunityIcons name="card-account-details-outline" size={24} color="#64748B" />
+                    <MaterialCommunityIcons name="card-account-details-outline" size={24} color={errors.run ? "#F43F5E" : "#64748B"} />
                   </View>
                   <TextInput
                     className="flex-1 h-16 pr-4 text-gray-900 text-lg"
                     placeholder="12.345.678-9"
                     placeholderTextColor="#94A3B8"
-                    keyboardType="default"
+                    keyboardType="number-pad"
                     autoCapitalize="none"
                     autoCorrect={false}
                     value={run}
-                    onChangeText={setRun}
+                    onChangeText={handleRunChange}
+                    editable={!isLoading}
+                    maxLength={12}
                   />
                 </View>
+                {errors.run ? (
+                  <Text className="text-rose-600 text-xs mt-1 ml-1">{errors.run}</Text>
+                ) : null}
               </View>
 
               {/* Contraseña */}
@@ -93,33 +186,53 @@ export default function LoginScreen() {
                 <Text className="text-sm font-semibold text-gray-700">
                   Contraseña <Text className="text-rose-500">*</Text>
                 </Text>
-                <View className="mt-3 flex-row items-center rounded-2xl border border-blue-100 bg-blue-50">
+                <View className={`mt-3 flex-row items-center rounded-2xl border ${errors.password ? 'border-rose-300 bg-rose-50' : 'border-blue-100 bg-blue-50'}`}>
                   <View className="h-16 w-16 items-center justify-center">
-                    <MaterialCommunityIcons name="lock" size={24} color="#64748B" />
+                    <MaterialCommunityIcons name="lock" size={24} color={errors.password ? "#F43F5E" : "#64748B"} />
                   </View>
                   <TextInput
                     className="flex-1 h-16 pr-4 text-gray-900 text-lg"
                     placeholder="••••••••"
                     placeholderTextColor="#94A3B8"
-                    secureTextEntry
+                    secureTextEntry={!showPassword}
                     autoCapitalize="none"
                     autoCorrect={false}
                     value={password}
-                    onChangeText={setPassword}
+                    onChangeText={(text) => {
+                      setPassword(text);
+                      if (errors.password) setErrors({ ...errors, password: '' });
+                    }}
+                    editable={!isLoading}
                   />
-                  <Pressable className="h-16 w-16 items-center justify-center">
-                    <Ionicons name="eye-outline" size={22} color="#94A3B8" />
+                  <Pressable 
+                    className="h-16 w-16 items-center justify-center"
+                    onPress={() => setShowPassword(!showPassword)}
+                  >
+                    <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={22} color="#94A3B8" />
                   </Pressable>
                 </View>
+                {errors.password ? (
+                  <Text className="text-rose-600 text-xs mt-1 ml-1">{errors.password}</Text>
+                ) : null}
               </View>
 
-              {/* Botón ingresar deshabilitado visualmente (sin acción) */}
+              {/* Botón ingresar */}
               <Pressable
                 accessibilityRole="button"
-                className="mt-8 h-16 rounded-2xl items-center justify-center bg-gray-200"
-                // onPress={undefined} // sin lógica
+                className={`mt-8 h-16 rounded-2xl items-center justify-center ${
+                  isLoading ? 'bg-orange-300' : 'bg-orange-500 active:bg-orange-600'
+                }`}
+                onPress={handleLogin}
+                disabled={isLoading}
               >
-                <Text className="text-gray-500 font-bold text-base">Iniciar sesión</Text>
+                {isLoading ? (
+                  <View className="flex-row items-center">
+                    <ActivityIndicator color="#fff" size="small" />
+                    <Text className="text-white font-bold text-base ml-2">Iniciando sesión...</Text>
+                  </View>
+                ) : (
+                  <Text className="text-white font-bold text-base">Iniciar sesión</Text>
+                )}
               </Pressable>
 
               {/* Ayuda */}
@@ -159,11 +272,16 @@ export default function LoginScreen() {
             onPress={(e) => e.stopPropagation()}
           >
             {/* Header del modal */}
-            <View className="flex-row items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-slate-50">
+            <View className="flex-row items-center justify-between p-6 border-b border-gray-200 bg-blue-50">
               <View className="flex-row items-center flex-1">
-                <View className="h-10 w-10 rounded-xl bg-gradient-to-r from-blue-500 to-purple-600 items-center justify-center mr-3">
+                <LinearGradient
+                  colors={["#3b82f6", "#9333ea"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={{ height: 40, width: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}
+                >
                   <MaterialCommunityIcons name="account" size={22} color="#fff" />
-                </View>
+                </LinearGradient>
                 <Text className="text-xl font-bold text-slate-800 flex-1">Usuarios Base para Pruebas</Text>
               </View>
               <Pressable
@@ -184,7 +302,7 @@ export default function LoginScreen() {
                 {baseUsers.map((user, index) => (
                   <Pressable
                     key={index}
-                    className="bg-gradient-to-br from-white to-gray-50 border border-gray-200 rounded-2xl p-5 active:border-blue-300"
+                    className="bg-white border border-gray-200 rounded-2xl p-5 active:border-blue-300"
                     onPress={() => selectBaseUser(user)}
                   >
                     <View className="flex-row items-start justify-between">
@@ -256,12 +374,17 @@ export default function LoginScreen() {
 
                       {/* Botón seleccionar */}
                       <View className="ml-4">
-                        <View className="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl">
+                        <LinearGradient
+                          colors={["#2563eb", "#9333ea"]}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 0 }}
+                          style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12 }}
+                        >
                           <View className="flex-row items-center">
                             <Text className="text-white text-sm font-semibold mr-1">Seleccionar</Text>
                             <Ionicons name="arrow-forward" size={14} color="#fff" />
                           </View>
-                        </View>
+                        </LinearGradient>
                       </View>
                     </View>
                   </Pressable>
@@ -270,12 +393,17 @@ export default function LoginScreen() {
             </ScrollView>
 
             {/* Footer */}
-            <View className="p-6 border-t border-gray-200 bg-gradient-to-r from-gray-50 to-blue-50/30">
+            <View className="p-6 border-t border-gray-200 bg-gray-50">
               <View className="flex-row items-center justify-between">
                 <View className="flex-row items-center flex-1">
-                  <View className="h-8 w-8 bg-gradient-to-r from-orange-400 to-orange-500 rounded-full items-center justify-center mr-3">
+                  <LinearGradient
+                    colors={["#fb923c", "#f97316"]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={{ height: 32, width: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}
+                  >
                     <Text className="text-sm">💡</Text>
-                  </View>
+                  </LinearGradient>
                   <Text className="text-sm text-gray-600 flex-1">
                     <Text className="font-semibold text-gray-800">Tip:</Text> Estos usuarios se crean automáticamente en el initialSetup
                   </Text>
