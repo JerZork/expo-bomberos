@@ -65,10 +65,10 @@ export default function TabNavigator({ onLogout, featureFlags = {}, role = 'user
   return (
     <Tab.Navigator
       screenOptions={{
-        headerShown: true,
+        headerShown: false,
         tabBarActiveTintColor: '#d00',
         tabBarInactiveTintColor: '#777',
-          animation: 'shift',
+        animation: 'shift',
       }}
     >
       {safeTabs.map(tab => {
