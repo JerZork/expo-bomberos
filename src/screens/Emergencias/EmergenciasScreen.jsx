@@ -69,7 +69,7 @@ const getColorStyles = (colorName) => {
   return COLOR_STYLES[normalizedColor] || COLOR_STYLES.slate;
 };
 
-export default function EmergenciasScreen() {
+export default function EmergenciasScreen({ navigation }) {
   const [user, setUser] = useState(null);
   const [estados, setEstados] = useState([]);
   const [items, setItems] = useState([]);
@@ -258,10 +258,21 @@ export default function EmergenciasScreen() {
     <SafeAreaView className="flex-1 bg-gray-100">
       {/* Header */}
       <View className="bg-white border-b border-gray-200 px-4 py-3">
-        <Text className="text-2xl font-bold text-gray-800">Partes de Emergencia</Text>
-        <Text className="text-sm text-gray-600 mt-1">
-          {filteredPartes.length} reporte{filteredPartes.length !== 1 ? 's' : ''}
-        </Text>
+        <View className="flex-row items-center justify-between">
+          <View className="flex-1">
+            <Text className="text-2xl font-bold text-gray-800">Partes de Emergencia</Text>
+            <Text className="text-sm text-gray-600 mt-1">
+              {filteredPartes.length} reporte{filteredPartes.length !== 1 ? 's' : ''}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('CrearParte')}
+            className="bg-blue-600 rounded-lg px-4 py-2 flex-row items-center"
+          >
+            <Ionicons name="add-circle-outline" size={20} color="#fff" />
+            <Text className="text-white font-semibold ml-2">Nuevo</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Tarjetas de filtro de estados — compactas y sin radio */}
@@ -476,6 +487,20 @@ export default function EmergenciasScreen() {
 
               {/* Footer con botones */}
               <View className="border-t border-gray-200 p-4">
+                <TouchableOpacity
+                  onPress={() => {
+                    closeDetail();
+                    // Navegar a la pantalla de detalle completo del parte
+                    navigation.navigate('DetalleParte', { parteId: selectedParte?.id });
+                  }}
+                  className="bg-blue-600 py-3 rounded-lg items-center mb-3"
+                >
+                  <View className="flex-row items-center">
+                    <Ionicons name="document-text-outline" size={20} color="#fff" />
+                    <Text className="text-white font-semibold ml-2">Ver parte completo</Text>
+                  </View>
+                </TouchableOpacity>
+                
                 <TouchableOpacity
                   onPress={closeDetail}
                   className="bg-gray-600 py-3 rounded-lg items-center"

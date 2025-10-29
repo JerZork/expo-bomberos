@@ -13,7 +13,7 @@ export const crearParteEmergencia = async (parteEmergenciaData) => {
 export const obtenerParteEmergenciaPorId = async (id, params = {}) => {
   try {
     const response = await apiClient.get(`/parteEmergencia/${id}`, { params });
-    console.log('Parte de emergencia obtenido:', response.data);
+    //console.log('Parte de emergencia obtenido:', response.data);
     return response.data;
   } catch (error) {
     console.error('Error al obtener parte de emergencia:', error);

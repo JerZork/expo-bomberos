@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 // Screens
 import HomeScreen from '../screens/Home/HomeScreen';
-import EmergenciasScreen from '../screens/Emergencias/EmergenciasScreen';
+import EmergenciasNavigator from './EmergenciasNavigator';
 import ProfileScreen from '../screens/Profile/ProfileScreen';
 
 /**
@@ -32,7 +32,7 @@ export default function TabNavigator({ onLogout, featureFlags = {}, role = 'user
         key: 'emergencias',
         name: 'Emergencias',
         label: 'Emergencias',
-        component: EmergenciasScreen,
+        component: EmergenciasNavigator,
         icon: 'flame',
         showWhen: () => featureFlags.emergencias !== false, // visible salvo que lo apagues
       },

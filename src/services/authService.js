@@ -1,5 +1,6 @@
 import apiClient from './api';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { jwtDecode } from 'jwt-decode';
 
 const AUTH_TOKEN_KEY = 'authToken';
@@ -38,9 +39,9 @@ export const authService = {
         roles: decodedToken.roles,
       };
 
-      // Guardar token y datos del usuario de forma segura
-      await SecureStore.setItemAsync(AUTH_TOKEN_KEY, token);
-      await SecureStore.setItemAsync(USER_DATA_KEY, JSON.stringify(user));
+  // Guardar token de forma segura y user en AsyncStorage (evitar >2KB en SecureStore)
+  await SecureStore.setItemAsync(AUTH_TOKEN_KEY, token);
+  await AsyncStorage.setItem(USER_DATA_KEY, JSON.stringify(user));
 
       return { token, user };
     } catch (error) {
@@ -53,8 +54,8 @@ export const authService = {
    */
   logout: async () => {
     try {
-      await SecureStore.deleteItemAsync(AUTH_TOKEN_KEY);
-      await SecureStore.deleteItemAsync(USER_DATA_KEY);
+  await SecureStore.deleteItemAsync(AUTH_TOKEN_KEY);
+  await AsyncStorage.removeItem(USER_DATA_KEY);
     } catch (error) {
       console.error('Error al cerrar sesión:', error);
     }
@@ -79,8 +80,18 @@ export const authService = {
    */
   getUserData: async () => {
     try {
-      const userData = await SecureStore.getItemAsync(USER_DATA_KEY);
-      return userData ? JSON.parse(userData) : null;
+      // 1) Intentar desde AsyncStorage (nuevo flujo)
+      const stored = await AsyncStorage.getItem(USER_DATA_KEY);
+      if (stored) return JSON.parse(stored);
+
+      // 2) Migración: si existe en SecureStore (flujo antiguo), mover a AsyncStorage
+      const legacy = await SecureStore.getItemAsync(USER_DATA_KEY);
+      if (legacy) {
+        await AsyncStorage.setItem(USER_DATA_KEY, legacy);
+        await SecureStore.deleteItemAsync(USER_DATA_KEY);
+        return JSON.parse(legacy);
+      }
+      return null;
     } catch (error) {
       console.error('Error al obtener datos del usuario:', error);
       return null;
