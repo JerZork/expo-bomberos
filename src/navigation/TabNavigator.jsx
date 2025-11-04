@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 // Screens
 import HomeScreen from '../screens/Home/HomeScreen';
 import EmergenciasNavigator from './EmergenciasNavigator';
+import DisponibilidadScreen from '../screens/Disponibilidad/DisponibilidadScreen';
 import ProfileScreen from '../screens/Profile/ProfileScreen';
 
 /**
@@ -35,6 +36,14 @@ export default function TabNavigator({ onLogout, featureFlags = {}, role = 'user
         component: EmergenciasNavigator,
         icon: 'flame',
         showWhen: () => featureFlags.emergencias !== false, // visible salvo que lo apagues
+      },
+      {
+        key: 'disponibilidad',
+        name: 'Disponibilidad',
+        label: 'Disponibilidad',
+        component: DisponibilidadScreen,
+        icon: 'person-circle',
+        showWhen: () => featureFlags.disponibilidad !== false, // visible por defecto
       },
       {
         key: 'perfil',

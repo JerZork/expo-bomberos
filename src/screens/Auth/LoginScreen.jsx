@@ -4,6 +4,7 @@ import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { authService } from '../../services/authService';
 import { formatRutForDisplay, formatRutForAPI, isValidRut, getRutErrorMessage } from '../../helpers/rutFormatter';
+import apiClient from '../../services/api';
 
 const baseUsers = [
   {
@@ -115,7 +116,7 @@ export default function LoginScreen({ onLoginSuccess }) {
             errorMessage = error.response.data?.message || 'Error al iniciar sesión';
         }
       } else if (error.request) {
-        errorMessage = 'No se pudo conectar con el servidor. Verifica que la API esté corriendo en localhost:3000';
+        errorMessage = 'No se pudo conectar con el servidor. Verifica tu conexión WiFi y que el backend esté corriendo.';
       }
 
       Alert.alert('Error de autenticación', errorMessage);

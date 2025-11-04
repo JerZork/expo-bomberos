@@ -1,10 +1,12 @@
 import axios from 'axios';
-import { API_URL, API_TIMEOUT } from '@env';
+
+// Configuración hardcodeada para builds (EAS no soporta bien @env)
+const API_BASE_URL = 'http://10.178.241.245:3000/api';
+const API_TIMEOUT = 10000;
 
 const apiClient = axios.create({
-  // API_URL debe incluir el prefijo /api (ej: http://10.30.164.245:3000/api)
-  baseURL: API_URL || 'http://localhost:3000/api',
-  timeout: parseInt(API_TIMEOUT) || 10000,
+  baseURL: API_BASE_URL,
+  timeout: API_TIMEOUT,
   headers: {
     'Content-Type': 'application/json',
   },

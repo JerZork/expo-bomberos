@@ -13,7 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { getEstadosReportes } from '../../services/estadosParte.service';
-import { getIncidentesResumen } from '../../services/incidentes.service';
+import { getIncidentesResumen, borrarIncidente } from '../../services/incidentes.service';
 import { authService } from '../../services/authService';
 
 // Mapeo de colores del backend a estilos de Tailwind
@@ -79,6 +79,7 @@ export default function EmergenciasScreen({ navigation }) {
   const [selectedParte, setSelectedParte] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [searchText, setSearchText] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   // Obtener datos del usuario
   useEffect(() => {
@@ -236,6 +237,59 @@ export default function EmergenciasScreen({ navigation }) {
   const closeDetail = () => {
     setModalVisible(false);
     setSelectedParte(null);
+  };
+
+  const handleDelete = async () => {
+    if (!selectedParte?.id || deleting) return;
+
+    const estadoKey = (selectedParte?.estado || '').toUpperCase();
+    const puedeBorrar = estadoKey === 'BORRADOR' || estadoKey === 'CORREGIR';
+
+    if (!puedeBorrar) {
+      Alert.alert(
+        'No permitido',
+        'Solo se pueden eliminar partes en estado BORRADOR o CORREGIR.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Confirmar eliminación',
+      '¿Estás seguro de eliminar este parte? Esta acción no se puede deshacer.',
+      [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+        {
+          text: 'Sí, eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setDeleting(true);
+              await borrarIncidente(selectedParte.id);
+              
+              // Actualizar la lista local removiendo el item
+              setItems((prevItems) => prevItems.filter((item) => item.id !== selectedParte.id));
+              
+              // Cerrar el modal
+              closeDetail();
+              
+              Alert.alert('Éxito', 'Parte eliminado correctamente');
+            } catch (error) {
+              console.error('Error al borrar parte:', error);
+              Alert.alert(
+                'Error',
+                error?.message || 'No se pudo borrar el parte. Intenta nuevamente.'
+              );
+            } finally {
+              setDeleting(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const getStreetNumber = (direccion) => {
@@ -500,6 +554,36 @@ export default function EmergenciasScreen({ navigation }) {
                     <Text className="text-white font-semibold ml-2">Ver parte completo</Text>
                   </View>
                 </TouchableOpacity>
+
+                {/* Botón de eliminar - solo para estados BORRADOR o CORREGIR */}
+                {(() => {
+                  const estadoKey = (selectedParte?.estado || '').toUpperCase();
+                  const puedeBorrar = estadoKey === 'BORRADOR' || estadoKey === 'CORREGIR';
+                  
+                  if (puedeBorrar) {
+                    return (
+                      <TouchableOpacity
+                        onPress={handleDelete}
+                        disabled={deleting}
+                        className={`py-3 rounded-lg items-center mb-3 ${
+                          deleting ? 'bg-red-400' : 'bg-red-600'
+                        }`}
+                      >
+                        <View className="flex-row items-center">
+                          <Ionicons 
+                            name="trash-outline" 
+                            size={20} 
+                            color="#fff" 
+                          />
+                          <Text className="text-white font-semibold ml-2">
+                            {deleting ? 'Eliminando...' : 'Eliminar parte'}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  }
+                  return null;
+                })()}
                 
                 <TouchableOpacity
                   onPress={closeDetail}

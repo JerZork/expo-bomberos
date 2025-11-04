@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,7 +17,6 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
 import { authService } from '../../services/authService';
 import { crearParteEmergencia } from '../../services/parteEmergencia.service';
-import { getCompaniaById, getCompanias } from '../../services/compania.service';
 import { getRegiones, getComunas } from '../../services/region.service';
 import { 
   getClasificacionesEmergencia, 
@@ -24,9 +24,10 @@ import {
   getTiposDano, 
   getFasesIncidente 
 } from '../../services/subtipoIncidente.service';
-import { getBomberosPorCompania } from '../../services/bombero.service';
+import { getBomberosPorCompania, getBomberosConLicencias, getMiCompania } from '../../services/bombero.service';
 import { getCarrosByCompania } from '../../services/carro.service';
 import { getServicios } from '../../services/servicios.service';
+import { getCompanias } from '../../services/compania.service';
 
 // Helpers
 const genId = () => Math.random().toString(36).slice(2, 10);
@@ -204,14 +205,25 @@ export default function CrearParteScreen({ navigation }) {
   // Catálogos
   const [regiones, setRegiones] = useState([]);
   const [comunas, setComunas] = useState([]);
-  const [companias, setCompanias] = useState([]);
+  const [compania, setCompania] = useState(null); // Ahora guardamos el objeto completo de la compañía
   const [clasificaciones, setClasificaciones] = useState([]);
   const [subtipos, setSubtipos] = useState([]);
   const [tiposDano, setTiposDano] = useState([]);
   const [fasesIncidente, setFasesIncidente] = useState([]);
-  const [bomberos, setBomberos] = useState([]);
+  const [bomberos, setBomberos] = useState([]); // Todos los bomberos para asistencia
+  const [conductores, setConductores] = useState([]); // Bomberos con licencias para Material Mayor
   const [carros, setCarros] = useState([]);
   const [servicios, setServicios] = useState([]);
+  const [companias, setCompanias] = useState([]);
+  // Cache de bomberos por compañía para Accidentados
+  const [bomberosByCompania, setBomberosByCompania] = useState({});
+  const [loadingBomberosByCompania, setLoadingBomberosByCompania] = useState({});
+  const [errorBomberosByCompania, setErrorBomberosByCompania] = useState({});
+  
+  // Estados de carga para lazy loading
+  const [loadingBomberos, setLoadingBomberos] = useState(false);
+  const [loadingConductores, setLoadingConductores] = useState(false);
+  const [loadingCarros, setLoadingCarros] = useState(false);
   
   // Campos del formulario
   const [companiaId, setCompaniaId] = useState('');
@@ -248,6 +260,36 @@ export default function CrearParteScreen({ navigation }) {
   // Asistencia
   const [asistenciaLugar, setAsistenciaLugar] = useState({});
   const [asistenciaCuartel, setAsistenciaCuartel] = useState({});
+  const [searchAsistencia, setSearchAsistencia] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 15; // Mostrar 50 bomberos por página
+  
+  const totalLugar = useMemo(() => Object.values(asistenciaLugar).filter(Boolean).length, [asistenciaLugar]);
+  const totalCuartel = useMemo(() => Object.values(asistenciaCuartel).filter(Boolean).length, [asistenciaCuartel]);
+  
+  // Filtrar bomberos por búsqueda
+  const filteredBomberos = useMemo(
+    () => bomberos.filter(b => (
+      nombreBombero(b).toLowerCase().includes((searchAsistencia || '').toLowerCase())
+    )),
+    [bomberos, searchAsistencia]
+  );
+  
+  // Calcular paginación
+  const totalPages = Math.ceil(filteredBomberos.length / ITEMS_PER_PAGE);
+  const paginatedBomberos = useMemo(
+    () => {
+      const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+      const endIndex = startIndex + ITEMS_PER_PAGE;
+      return filteredBomberos.slice(startIndex, endIndex);
+    },
+    [filteredBomberos, currentPage]
+  );
+  
+  // Reset página cuando cambia la búsqueda
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchAsistencia]);
   
   // Errores
   const [errors, setErrors] = useState({});
@@ -258,14 +300,31 @@ export default function CrearParteScreen({ navigation }) {
       try {
         const userData = await authService.getUserData();
         setUser(userData);
-        
-          // Si el usuario tiene compañía, autoseleccionarla
-          if (userData?.compania?.id) {
-            setCompaniaId(String(userData.compania.id));
+
+        // Cargar catálogos iniciales (en paralelo al fetch de compañía)
+        const catalogsPromise = loadInitialData();
+
+        // Auto-seleccionar compañía del usuario
+        if (userData?.compania?.id) {
+          const cId = String(userData.compania.id);
+          setCompaniaId(cId);
+          setCompania(userData.compania);
+        } else {
+          // Fallback: consultar compañía del usuario autenticado
+          try {
+            const res = await getMiCompania();
+            // Normalizar: intentar varias formas comunes
+            const c = res?.data?.compania || res?.data || res;
+            if (c?.id) {
+              setCompaniaId(String(c.id));
+              setCompania(c);
+            }
+          } catch (e) {
+            console.warn('No se pudo obtener la compañía del usuario (fallback).', e?.message || e);
           }
-        
-        // Cargar catálogos iniciales
-        await loadInitialData();
+        }
+
+        await catalogsPromise;
       } catch (error) {
         console.error('Error al cargar usuario:', error);
         Alert.alert('Error', 'No se pudo cargar la información del usuario');
@@ -278,21 +337,35 @@ export default function CrearParteScreen({ navigation }) {
 
   const loadInitialData = async () => {
     try {
-      const [regionesData, clasificacionesData, tiposDanoData, fasesData, serviciosData, companiasData] = await Promise.all([
+      // FASE 1: Solo catálogos esenciales para inicio (reducir de 6 a 2)
+      const [regionesData, clasificacionesData] = await Promise.all([
         getRegiones().catch(() => []),
         getClasificacionesEmergencia().catch(() => []),
-        getTiposDano().catch(() => []),
-        getFasesIncidente().catch(() => []),
-        getServicios().catch(() => []),
-        getCompanias().catch(() => []),
       ]);
 
       setRegiones(normalizeArray(regionesData));
       setClasificaciones(normalizeArray(clasificacionesData));
-      setTiposDano(normalizeArray(tiposDanoData));
-      setFasesIncidente(normalizeArray(fasesData));
-      setServicios(normalizeArray(serviciosData));
-      setCompanias(normalizeArray(companiasData, 'data'));
+
+      // FASE 2: Cargar catálogos secundarios en background (sin bloquear UI)
+      Promise.all([
+        getTiposDano().catch(() => []),
+        getFasesIncidente().catch(() => []),
+        getServicios().catch(() => []),
+        getCompanias().catch(() => []),
+      ]).then(([tiposDanoData, fasesData, serviciosData, companiasData]) => {
+        setTiposDano(normalizeArray(tiposDanoData));
+        setFasesIncidente(normalizeArray(fasesData));
+        setServicios(normalizeArray(serviciosData));
+        
+        const compArr = normalizeArray(companiasData, 'companias').length > 0
+          ? normalizeArray(companiasData, 'companias')
+          : normalizeArray(companiasData, 'data').length > 0
+            ? normalizeArray(companiasData, 'data')
+            : normalizeArray(companiasData);
+        setCompanias(compArr);
+      }).catch((error) => {
+        console.error('Error al cargar catálogos secundarios:', error);
+      });
     } catch (error) {
       console.error('Error al cargar catálogos:', error);
     }
@@ -322,69 +395,210 @@ export default function CrearParteScreen({ navigation }) {
     }
   }, [clasificacionId]);
 
-  // Cargar bomberos y carros cuando cambia la compañía
+  // Limpiar datos dependientes cuando cambia el subtipo
   useEffect(() => {
-    if (companiaId) {
-      Promise.all([
-        getBomberosPorCompania(companiaId).catch(() => []),
-        getCarrosByCompania(companiaId).catch(() => []),
-      ]).then(([bomberosData, carrosData]) => {
-        setBomberos(normalizeArray(bomberosData));
-        setCarros(normalizeArray(carrosData));
-      });
-      
-      // Reset asistencia
-      setAsistenciaLugar({});
-      setAsistenciaCuartel({});
-    } else {
-      setBomberos([]);
-      setCarros([]);
-    }
-  }, [companiaId]);
-
-  // Validación
-  const validate = () => {
-    const newErrors = {};
-
-    // Tab 1: Datos generales
-    if (!companiaId) newErrors.companiaId = 'Seleccione una compañía';
-    if (!fecha) newErrors.fecha = 'Ingrese la fecha';
-    if (!horaDespacho) newErrors.horaDespacho = 'Ingrese la hora de despacho';
-    if (!hora60) newErrors.hora60 = 'Ingrese la hora 6-0';
-    if (!regionId) newErrors.regionId = 'Seleccione una región';
-    if (!comunaId) newErrors.comunaId = 'Seleccione una comuna';
-    if (!calle || !calle.trim()) newErrors.calle = 'Ingrese la calle';
-    if (!bomberoACargoId) newErrors.bomberoACargoId = 'Seleccione el bombero a cargo';
-
-    // Tab 2: Tipo de emergencia
-    if (!clasificacionId) newErrors.clasificacionId = 'Seleccione una clasificación';
-    if (!subtipoId) newErrors.subtipoId = 'Seleccione un subtipo';
-
     const selectedSubtipo = subtipos.find(s => s.id === parseInt(subtipoId));
     
-    // Validar inmuebles si el subtipo los requiere
-    if (selectedSubtipo?.contieneInmuebles && inmuebles.length === 0) {
-      newErrors.inmuebles = 'Agregue al menos un inmueble';
+    // Si el nuevo subtipo no tiene fuego, limpiar tipo de daño y fase
+    if (selectedSubtipo && !selectedSubtipo.contieneFuego) {
+      setTipoIncendioId('');
+      setFaseId('');
     }
     
-    // Validar vehículos si el subtipo los requiere
-    if (selectedSubtipo?.contieneVehiculos && vehiculos.length === 0) {
-      newErrors.vehiculos = 'Agregue al menos un vehículo';
+    // Si el nuevo subtipo no tiene inmuebles, limpiar inmuebles
+    if (selectedSubtipo && !selectedSubtipo.contieneInmuebles) {
+      setInmuebles([]);
+    }
+    
+    // Si el nuevo subtipo no tiene vehículos, limpiar vehículos
+    if (selectedSubtipo && !selectedSubtipo.contieneVehiculos) {
+      setVehiculos([]);
+    }
+  }, [subtipoId, subtipos]);
+
+  // Cargar bomberos y carros cuando cambia la compañía (LAZY: solo cuando sea necesario)
+  useEffect(() => {
+    if (!companiaId) return;
+
+    // Reset asistencia
+    setAsistenciaLugar({});
+    setAsistenciaCuartel({});
+
+    // CARGA DIFERIDA: Solo cargar cuando el usuario llegue a tabs que los necesiten
+    // Por ahora, solo cargar carros (Material Mayor es tab 2, más común)
+    // Bomberos se cargarán bajo demanda
+  }, [companiaId]);
+
+  // Cargar bomberos solo cuando se necesiten (tab Asistencia o Material Mayor)
+  useEffect(() => {
+    if (!companiaId) return;
+    
+    // Solo cargar si estamos en tab que los necesita (Material Mayor = 2, Asistencia = 4)
+    if (activeTab === 2 || activeTab === 4) {
+      // Evitar recargas múltiples
+      if (bomberos.length === 0 && !loadingBomberos) {
+        setLoadingBomberos(true);
+        getBomberosPorCompania(companiaId)
+          .then(data => {
+            const bomberosData = normalizeArray(data);
+            setBomberos(bomberosData);
+          })
+          .catch((err) => {
+            console.error('Error al cargar bomberos:', err);
+            setBomberos([]);
+          })
+          .finally(() => setLoadingBomberos(false));
+      }
+    }
+  }, [companiaId, activeTab, bomberos.length, loadingBomberos]);
+
+  // Cargar conductores solo cuando se necesiten (tab Material Mayor)
+  useEffect(() => {
+    if (!companiaId) return;
+    
+    // Solo cargar si estamos en tab Material Mayor (activeTab === 2)
+    if (activeTab === 2) {
+      // Evitar recargas múltiples
+      if (conductores.length === 0 && !loadingConductores) {
+        setLoadingConductores(true);
+        getBomberosConLicencias(companiaId)
+          .then(data => {
+            const conductoresData = normalizeArray(data);
+            setConductores(conductoresData);
+          })
+          .catch((err) => {
+            console.error('Error al cargar conductores:', err);
+            setConductores([]);
+          })
+          .finally(() => setLoadingConductores(false));
+      }
+    }
+  }, [companiaId, activeTab, conductores.length, loadingConductores]);
+
+  // Cargar carros solo cuando se necesiten (tab Material Mayor)
+  useEffect(() => {
+    if (!companiaId) return;
+    
+    // Solo cargar si estamos en tab Material Mayor (activeTab === 2)
+    if (activeTab === 2) {
+      // Evitar recargas múltiples
+      if (carros.length === 0 && !loadingCarros) {
+        setLoadingCarros(true);
+        getCarrosByCompania(companiaId)
+          .then(data => {
+            const carrosData = normalizeArray(data);
+            setCarros(carrosData);
+          })
+          .catch((err) => {
+            console.error('Error al cargar carros:', err);
+            setCarros([]);
+          })
+          .finally(() => setLoadingCarros(false));
+      }
+    }
+  }, [companiaId, activeTab, carros.length, loadingCarros]);
+
+  // Validación
+  const isPosInt = (v) => Number.isInteger(Number(v)) && Number(v) > 0;
+
+  const validate = () => {
+    const nextErrors = {};
+
+    // Requeridos simples
+    if (!companiaId) nextErrors.companiaId = 'Obligatorio.';
+    if (!fecha) nextErrors.fecha = 'Obligatorio.';
+    if (!horaDespacho) nextErrors.horaDespacho = 'Obligatorio.';
+    if (!hora60) nextErrors.hora60 = 'Obligatorio.';
+    if (!hora63) nextErrors.hora63 = 'Obligatorio.';
+    if (!hora69) nextErrors.hora69 = 'Obligatorio.';
+    if (!hora610) nextErrors.hora610 = 'Obligatorio.';
+    if (!regionId && regionId !== 0) nextErrors.regionId = 'Obligatorio.';
+    if (!comunaId && comunaId !== 0) nextErrors.comunaId = 'Obligatorio.';
+    if (!calle || !calle.trim()) nextErrors.calle = 'Obligatorio.';
+
+    // Tipo de emergencia / Clave radial
+    if (!clasificacionId) nextErrors.clasificacionId = 'Seleccione una clasificación.';
+    if (!subtipoId) nextErrors.subtipoId = 'Seleccione una clave radial.';
+    
+    // Si la clave radial elegida contiene fuego, exigir tipo de incendio y fase
+    const subtipoSeleccionado = subtipos.find((s) => s.id === parseInt(subtipoId));
+    if (subtipoSeleccionado?.contieneFuego) {
+      if (!tipoIncendioId) nextErrors.tipoIncendioId = 'Seleccione el tipo de incendio/daño.';
+      if (!faseId) nextErrors.faseId = 'Seleccione la fase alcanzada.';
     }
 
-    // Tab 3: Material mayor
+    // Material mayor: al menos 1 y completo
     if (materialMayor.length === 0) {
-      newErrors.materialMayor = 'Agregue al menos una unidad';
+      nextErrors.materialMayor = 'Debe agregar al menos una unidad.';
+    } else {
+      const invalidRow = materialMayor.find(
+        (r) => !r.unidadId || !r.conductorId || !r.bomberoId || !isPosInt(r.voluntarios) || !isPosInt(r.kmSalida) || !isPosInt(r.kmLlegada)
+      );
+      if (invalidRow) {
+        nextErrors.materialMayor = 'Complete todos los campos de la(s) unidad(es). Voluntarios y KM deben ser enteros > 0.';
+      }
     }
 
-    // Tab 5: Asistencia
-    const lugarIds = Object.keys(asistenciaLugar).filter(k => asistenciaLugar[k]);
-    if (lugarIds.length === 0) {
-      newErrors.asistenciaLugar = 'Seleccione al menos un bombero en el lugar';
+    // Asistencia en el lugar: al menos 1
+    const anyLugar = Object.values(asistenciaLugar).some(Boolean);
+    if (!anyLugar) nextErrors.asistenciaLugar = 'Registre al menos 1 voluntario presente en el lugar.';
+
+    // Inmuebles: validaciones extra
+    const inmErrors = [];
+    inmuebles.forEach((inm, i) => {
+      if (inm.n_pisos !== '' && !isPosInt(inm.n_pisos)) {
+        inmErrors.push(`Inmueble #${i + 1}: "N° de pisos" debe ser entero > 0.`);
+      }
+      if (inm.m2_construccion !== '' && !(Number(inm.m2_construccion) > 0)) {
+        inmErrors.push(`Inmueble #${i + 1}: "m² construcción" debe ser > 0.`);
+      }
+      if (inm.m2_afectado !== '' && !(Number(inm.m2_afectado) > 0)) {
+        inmErrors.push(`Inmueble #${i + 1}: "m² afectado" debe ser > 0.`);
+      }
+      // Validar edades solo de habitantes (dueños no tienen edad)
+      const edades = [];
+      (inm.habitantes || []).forEach(h => {
+        if (h?.edad !== undefined && h?.edad !== '') edades.push(h.edad);
+      });
+      const invalidEdad = edades.find(ed => !isPosInt(ed));
+      if (invalidEdad !== undefined) {
+        inmErrors.push(`Inmueble #${i + 1}: "Edad" debe ser entero positivo en los campos informados.`);
+      }
+    });
+    if (inmErrors.length > 0) {
+      nextErrors.inmuebles = inmErrors.join(' ');
     }
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    // Vehículos: validaciones extra
+    const currentYear = new Date().getFullYear();
+    const vehErrors = [];
+    vehiculos.forEach((v, i) => {
+      if (v.anio !== '' && (!isPosInt(v.anio) || Number(v.anio) <= 1900 || Number(v.anio) >= currentYear)) {
+        vehErrors.push(`Vehículo #${i + 1}: "Año" debe ser entero > 1900 y menor que ${currentYear}.`);
+      }
+      // Validar edades de chofer y pasajeros (dueños no tienen edad)
+      const edades = [];
+      if (v.chofer?.edad !== undefined && v.chofer?.edad !== '') edades.push(v.chofer.edad);
+      (v.pasajeros || []).forEach(p => {
+        if (p?.edad !== undefined && p?.edad !== '') edades.push(p.edad);
+      });
+      const invalidEdad = edades.find(ed => !isPosInt(ed));
+      if (invalidEdad !== undefined) {
+        vehErrors.push(`Vehículo #${i + 1}: "Edad" debe ser entero positivo en los campos informados.`);
+      }
+    });
+    if (vehErrors.length > 0) {
+      nextErrors.vehiculos = vehErrors.join(' ');
+    }
+
+    // Validar idRedactor (usuario autenticado)
+    const idRedactor = user?.id ? Number(user.id) : null;
+    if (!idRedactor) {
+      nextErrors.idRedactor = 'Sesión inválida: vuelva a iniciar sesión.';
+    }
+
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
   };
 
   const handleSubmit = async () => {
@@ -396,107 +610,51 @@ export default function CrearParteScreen({ navigation }) {
     try {
       setSubmitting(true);
 
+      // Construir fechaHoraDespacho (igual que en web)
+      const fechaTrim = (fecha || '').trim();
+      const horaTrim = (horaDespacho || '').trim();
+      let fechaHoraDespacho = null;
+      if (fechaTrim && horaTrim && /^\d{4}-\d{2}-\d{2}$/.test(fechaTrim) && /^\d{2}:\d{2}$/.test(horaTrim)) {
+        const [yy, mm, dd] = fechaTrim.split('-').map(Number);
+        const [hh, mi] = horaTrim.split(':').map(Number);
+        const localDate = new Date(yy, mm - 1, dd, hh, mi, 0, 0);
+        fechaHoraDespacho = localDate.toISOString();
+      }
+
       const payload = {
-        idRedactor: user.id,
         companiaId: parseInt(companiaId),
         fecha,
         horaDespacho,
+        fechaHoraDespacho,
         hora6_0: hora60,
-        hora6_3: hora63 || null,
-        hora6_9: hora69 || null,
-        hora6_10: hora610 || null,
-        descripcionPreliminar: descripcionPreliminar.trim() || null,
-        idBomberoACargo: parseInt(bomberoACargoId),
-        direccion: {
-          regionId: parseInt(regionId),
-          comunaId: parseInt(comunaId),
-          calle: calle.trim(),
-          numero: numero.trim() || null,
-          depto: depto.trim() || null,
-          referencia: referencia.trim() || null,
-        },
+        hora6_3: hora63,
+        hora6_9: hora69,
+        hora6_10: hora610,
+        regionId: parseInt(regionId),
+        comunaId: parseInt(comunaId),
+        calle: calle.trim(),
+        numero: (numero || '').toString().trim() || null,
+        depto: (depto || '').toString().trim() || null,
+        referencia: (referencia || '').toString().trim() || '',
         clasificacionId: parseInt(clasificacionId),
         subtipoId: parseInt(subtipoId),
-        incendio: tipoIncendioId ? {
-          tipoId: parseInt(tipoIncendioId),
-          faseId: faseId ? parseInt(faseId) : null,
-        } : null,
-        inmuebles: inmuebles.map(inm => ({
-          tipo_construccion: inm.tipo_construccion || null,
-          n_pisos: inm.n_pisos ? parseInt(inm.n_pisos) : null,
-          m2_construccion: inm.m2_construccion ? parseFloat(inm.m2_construccion) : null,
-          m2_afectado: inm.m2_afectado ? parseFloat(inm.m2_afectado) : null,
-          danos_vivienda: inm.danos_vivienda || null,
-          danos_anexos: inm.danos_anexos || null,
-          calle: inm.calle?.trim() || null,
-          numero: inm.numero?.trim() || null,
-          dueno: inm.dueno ? {
-            nombres: inm.dueno.nombres?.trim() || null,
-            apellidos: inm.dueno.apellidos?.trim() || null,
-            run: inm.dueno.run?.trim() || null,
-            telefono: inm.dueno.telefono?.trim() || null,
-          } : null,
-          habitantes: inm.habitantes.map(h => ({
-            nombres: h.nombres?.trim() || null,
-            apellidos: h.apellidos?.trim() || null,
-            run: h.run?.trim() || null,
-            edad: h.edad ? parseInt(h.edad) : null,
-          })),
-        })),
-        vehiculos: vehiculos.map(veh => ({
-          patente: veh.patente?.trim() || null,
-          marca: veh.marca?.trim() || null,
-          modelo: veh.modelo?.trim() || null,
-          anio: veh.anio ? parseInt(veh.anio) : null,
-          color: veh.color?.trim() || null,
-          danos_vehiculo: veh.danos_vehiculo?.trim() || null,
-          dueno: veh.dueno ? {
-            nombres: veh.dueno.nombres?.trim() || null,
-            apellidos: veh.dueno.apellidos?.trim() || null,
-            run: veh.dueno.run?.trim() || null,
-            telefono: veh.dueno.telefono?.trim() || null,
-          } : null,
-          chofer: veh.chofer ? {
-            nombres: veh.chofer.nombres?.trim() || null,
-            apellidos: veh.chofer.apellidos?.trim() || null,
-            run: veh.chofer.run?.trim() || null,
-            edad: veh.chofer.edad ? parseInt(veh.chofer.edad) : null,
-          } : null,
-          pasajeros: veh.pasajeros.map(p => ({
-            nombres: p.nombres?.trim() || null,
-            apellidos: p.apellidos?.trim() || null,
-            run: p.run?.trim() || null,
-            edad: p.edad ? parseInt(p.edad) : null,
-          })),
-        })),
-        materialMayor: materialMayor.map(m => ({
-          unidadId: parseInt(m.unidadId),
-          conductorId: m.conductorId ? parseInt(m.conductorId) : null,
-          jefeUnidadId: m.bomberoId ? parseInt(m.bomberoId) : null,
-          voluntarios: m.voluntarios ? parseInt(m.voluntarios) : null,
-          kmSalida: m.kmSalida ? parseFloat(m.kmSalida) : null,
-          kmLlegada: m.kmLlegada ? parseFloat(m.kmLlegada) : null,
-        })),
-        accidentados: accidentados.map(a => ({
-          companiaId: parseInt(a.companiaId),
-          bomberoId: parseInt(a.bomberoId),
-          lesiones: a.lesiones?.trim() || null,
-          constancia: a.constancia?.trim() || null,
-          comisaria: a.comisaria?.trim() || null,
-          acciones: a.acciones?.trim() || null,
-        })),
-        otrosServicios: otrosServicios.map(s => ({
-          servicioId: parseInt(s.servicioId),
-          tipoUnidad: s.tipoUnidad?.trim() || null,
-          responsable: s.responsable?.trim() || null,
-          personal: s.personal ? parseInt(s.personal) : null,
-          observaciones: s.observaciones?.trim() || null,
-        })),
+        tipoIncendioId: tipoIncendioId ? parseInt(tipoIncendioId) : null,
+        faseId: faseId ? parseInt(faseId) : null,
+        descripcionPreliminar: (descripcionPreliminar || '').trim() || '',
+        bomberoACargoId: bomberoACargoId ? parseInt(bomberoACargoId) : null,
+        idRedactor: user.id,
+        inmuebles,
+        vehiculos,
+        materialMayor,
+        accidentados,
+        otrosServicios,
         asistencia: {
-          lugar: Object.keys(asistenciaLugar).filter(k => asistenciaLugar[k]).map(id => parseInt(id)),
-          cuartel: Object.keys(asistenciaCuartel).filter(k => asistenciaCuartel[k]).map(id => parseInt(id)),
+          lugar: Object.keys(asistenciaLugar).filter((id) => asistenciaLugar[id]).map(Number),
+          cuartel: Object.keys(asistenciaCuartel).filter((id) => asistenciaCuartel[id]).map(Number),
         },
       };
+
+      console.log('Payload parte (con fechaHoraDespacho calculada):', payload);
 
       await crearParteEmergencia(payload);
       
@@ -530,9 +688,13 @@ export default function CrearParteScreen({ navigation }) {
       danos_anexos: '',
       calle: '',
       numero: '',
-      dueno: null,
+      duenos: [], // Ahora es un array
       habitantes: [],
     }]);
+  };
+
+  const updateInmueble = (idx, next) => {
+    setInmuebles(prev => prev.map((it, i) => (i === idx ? next : it)));
   };
 
   const removeInmueble = (idx) => {
@@ -549,7 +711,7 @@ export default function CrearParteScreen({ navigation }) {
       anio: '',
       color: '',
       danos_vehiculo: '',
-      dueno: null,
+      duenos: [], // Ahora es un array
       chofer: null,
       pasajeros: [],
     }]);
@@ -557,6 +719,10 @@ export default function CrearParteScreen({ navigation }) {
 
   const removeVehiculo = (idx) => {
     setVehiculos(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const updateVehiculo = (idx, next) => {
+    setVehiculos(prev => prev.map((it, i) => (i === idx ? next : it)));
   };
 
   // Funciones para manejar material mayor
@@ -599,6 +765,32 @@ export default function CrearParteScreen({ navigation }) {
     setAccidentados(prev => prev.filter((_, i) => i !== idx));
   };
 
+  const updateAccidentado = (idx, next) => {
+    setAccidentados(prev => prev.map((a, i) => (i === idx ? next : a)));
+  };
+
+  // Cargar bomberos por compañía bajo demanda (para Accidentados)
+  const ensureBomberosForCompania = async (compId) => {
+    const id = String(compId || '');
+    if (!id) return;
+    if (bomberosByCompania[id]) return; // ya cargado
+    try {
+      setLoadingBomberosByCompania(prev => ({ ...prev, [id]: true }));
+      setErrorBomberosByCompania(prev => ({ ...prev, [id]: '' }));
+      const res = await getBomberosPorCompania(id);
+      const arr = normalizeArray(res, 'bomberos').length > 0
+        ? normalizeArray(res, 'bomberos')
+        : normalizeArray(res);
+      setBomberosByCompania(prev => ({ ...prev, [id]: arr }));
+    } catch (e) {
+      console.error('No se pudieron cargar los bomberos de la compañía', id, e);
+      setBomberosByCompania(prev => ({ ...prev, [id]: [] }));
+      setErrorBomberosByCompania(prev => ({ ...prev, [id]: 'No se pudieron cargar los bomberos.' }));
+    } finally {
+      setLoadingBomberosByCompania(prev => ({ ...prev, [id]: false }));
+    }
+  };
+
   // Funciones para manejar otros servicios
   const addOtroServicio = () => {
     setOtrosServicios(prev => [...prev, {
@@ -615,16 +807,20 @@ export default function CrearParteScreen({ navigation }) {
     setOtrosServicios(prev => prev.filter((_, i) => i !== idx));
   };
 
-  // Toggle asistencia
-  const toggleLugar = (id, checked) => {
-    setAsistenciaLugar(prev => ({ ...prev, [id]: checked }));
-    if (checked) setAsistenciaCuartel(prev => ({ ...prev, [id]: false }));
+  const updateOtroServicio = (idx, next) => {
+    setOtrosServicios(prev => prev.map((s, i) => (i === idx ? next : s)));
   };
 
-  const toggleCuartel = (id, checked) => {
+  // Toggle asistencia con useCallback para evitar re-renders
+  const toggleLugar = useCallback((id, checked) => {
+    setAsistenciaLugar(prev => ({ ...prev, [id]: checked }));
+    if (checked) setAsistenciaCuartel(prev => ({ ...prev, [id]: false }));
+  }, []);
+
+  const toggleCuartel = useCallback((id, checked) => {
     setAsistenciaCuartel(prev => ({ ...prev, [id]: checked }));
     if (checked) setAsistenciaLugar(prev => ({ ...prev, [id]: false }));
-  };
+  }, []);
 
   const selectedSubtipo = subtipos.find(s => s.id === parseInt(subtipoId));
   const hasFuego = !!selectedSubtipo?.contieneFuego;
@@ -714,15 +910,16 @@ export default function CrearParteScreen({ navigation }) {
             <View>
               <Text className="text-lg font-bold text-gray-900 mb-4">Datos Generales y Dirección</Text>
               
-              {/* Compañía */}
-              <SelectField
-                label="Compañía"
-                selectedValue={companiaId}
-                onValueChange={setCompaniaId}
-                options={companias.map(c => ({ value: c.id, label: c.nombre || `Compañía #${c.id}` }))}
-                placeholder="Seleccione compañía"
-                error={errors.companiaId}
-              />
+              {/* Compañía - Solo lectura */}
+              <View className="mb-4">
+                <FieldLabel required>Compañía</FieldLabel>
+                <View className="border border-gray-300 rounded-lg px-3 py-2 bg-gray-50">
+                  <Text className="text-gray-700">
+                    {compania?.nombre || user?.compania?.nombre || 'Cargando...'}
+                  </Text>
+                </View>
+                {errors.companiaId ? <Text className="text-red-500 text-xs mt-1">{errors.companiaId}</Text> : null}
+              </View>
 
               {/* Fecha y Hora Despacho en 2 columnas */}
               <View className="flex-row gap-3">
@@ -917,15 +1114,261 @@ export default function CrearParteScreen({ navigation }) {
                   </TouchableOpacity>
                   {inmuebles.map((inm, idx) => (
                     <View key={inm.id} className="bg-gray-50 rounded-lg p-3 mb-3">
-                      <View className="flex-row justify-between items-center mb-2">
+                      <View className="flex-row justify-between items-center mb-3">
                         <Text className="font-bold text-gray-700">Inmueble {idx + 1}</Text>
                         <TouchableOpacity onPress={() => removeInmueble(idx)}>
                           <Ionicons name="trash-outline" size={20} color="#ef4444" />
                         </TouchableOpacity>
                       </View>
-                      <Text className="text-xs text-gray-500 mb-2">
-                        (Campos básicos - implementar completo según necesidad)
-                      </Text>
+
+                      {/* Tipo de construcción y N° pisos */}
+                      <View className="flex-row gap-2">
+                        <View className="flex-1 mb-3">
+                          <Text className="text-sm font-semibold text-gray-700 mb-1">Tipo de construcción</Text>
+                          <TextInput
+                            className="border border-gray-300 rounded-lg px-3 py-2"
+                            placeholder="Ej: Casa, Departamento..."
+                            value={inm.tipo_construccion}
+                            onChangeText={(v)=> updateInmueble(idx, { ...inm, tipo_construccion: v })}
+                          />
+                        </View>
+                        <View className="flex-1 mb-3">
+                          <Text className="text-sm font-semibold text-gray-700 mb-1">N° Pisos</Text>
+                          <TextInput
+                            className="border border-gray-300 rounded-lg px-3 py-2"
+                            placeholder="0"
+                            keyboardType="numeric"
+                            value={String(inm.n_pisos || '')}
+                            onChangeText={(v)=> updateInmueble(idx, { ...inm, n_pisos: v.replace(/[^0-9]/g,'') })}
+                          />
+                        </View>
+                      </View>
+
+                      {/* Metros cuadrados */}
+                      <View className="flex-row gap-2">
+                        <View className="flex-1 mb-3">
+                          <Text className="text-sm font-semibold text-gray-700 mb-1">m² construcción</Text>
+                          <TextInput
+                            className="border border-gray-300 rounded-lg px-3 py-2"
+                            placeholder="0"
+                            keyboardType="numeric"
+                            value={String(inm.m2_construccion || '')}
+                            onChangeText={(v)=> updateInmueble(idx, { ...inm, m2_construccion: v.replace(/[^0-9.]/g,'') })}
+                          />
+                        </View>
+                        <View className="flex-1 mb-3">
+                          <Text className="text-sm font-semibold text-gray-700 mb-1">m² afectado</Text>
+                          <TextInput
+                            className="border border-gray-300 rounded-lg px-3 py-2"
+                            placeholder="0"
+                            keyboardType="numeric"
+                            value={String(inm.m2_afectado || '')}
+                            onChangeText={(v)=> updateInmueble(idx, { ...inm, m2_afectado: v.replace(/[^0-9.]/g,'') })}
+                          />
+                        </View>
+                      </View>
+
+                      {/* Daños */}
+                      <View className="mb-3">
+                        <Text className="text-sm font-semibold text-gray-700 mb-1">Daños en vivienda</Text>
+                        <TextInput
+                          className="border border-gray-300 rounded-lg px-3 py-2"
+                          placeholder="Descripción de daños"
+                          value={inm.danos_vivienda}
+                          onChangeText={(v)=> updateInmueble(idx, { ...inm, danos_vivienda: v })}
+                        />
+                      </View>
+                      <View className="mb-3">
+                        <Text className="text-sm font-semibold text-gray-700 mb-1">Daños en anexos</Text>
+                        <TextInput
+                          className="border border-gray-300 rounded-lg px-3 py-2"
+                          placeholder="Descripción de daños en anexos"
+                          value={inm.danos_anexos}
+                          onChangeText={(v)=> updateInmueble(idx, { ...inm, danos_anexos: v })}
+                        />
+                      </View>
+
+                      {/* Dirección específica del inmueble */}
+                      <View className="flex-row gap-2">
+                        <View className="flex-1 mb-3">
+                          <Text className="text-sm font-semibold text-gray-700 mb-1">Calle</Text>
+                          <TextInput
+                            className="border border-gray-300 rounded-lg px-3 py-2"
+                            placeholder="Calle"
+                            value={inm.calle}
+                            onChangeText={(v)=> updateInmueble(idx, { ...inm, calle: v })}
+                          />
+                        </View>
+                        <View className="w-28 mb-3">
+                          <Text className="text-sm font-semibold text-gray-700 mb-1">Número</Text>
+                          <TextInput
+                            className="border border-gray-300 rounded-lg px-3 py-2"
+                            placeholder="N°"
+                            value={inm.numero}
+                            onChangeText={(v)=> updateInmueble(idx, { ...inm, numero: v })}
+                          />
+                        </View>
+                      </View>
+
+                      {/* Dueños */}
+                      <Text className="text-sm font-semibold text-gray-800 mb-2">Dueños</Text>
+                      {(inm.duenos||[]).map((d, di) => (
+                        <View key={`${inm.id}-d-${di}`} className="bg-white rounded-lg p-2 mb-2 border border-gray-200">
+                          <View className="mb-2">
+                            <TextInput
+                              className="border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Nombre completo"
+                              value={d.nombreCompleto || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(inm.duenos||[])];
+                                next[di] = { ...(next[di]||{}), nombreCompleto: v };
+                                updateInmueble(idx, { ...inm, duenos: next });
+                              }}
+                            />
+                          </View>
+                          <View className="flex-row gap-2">
+                            <TextInput
+                              className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="RUN"
+                              value={d.run || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(inm.duenos||[])];
+                                next[di] = { ...(next[di]||{}), run: v };
+                                updateInmueble(idx, { ...inm, duenos: next });
+                              }}
+                            />
+                            <TextInput
+                              className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Teléfono"
+                              value={d.telefono || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(inm.duenos||[])];
+                                next[di] = { ...(next[di]||{}), telefono: v };
+                                updateInmueble(idx, { ...inm, duenos: next });
+                              }}
+                            />
+                          </View>
+                          <View className="flex-row items-center justify-between my-2">
+                            <Text className="text-sm font-semibold text-gray-700">¿Es empresa?</Text>
+                            <Switch
+                              value={!!d.esEmpresa}
+                              onValueChange={(val)=> {
+                                const next = [...(inm.duenos||[])];
+                                next[di] = { ...(next[di]||{}), esEmpresa: val };
+                                updateInmueble(idx, { ...inm, duenos: next });
+                              }}
+                            />
+                          </View>
+                          <View className="mb-2">
+                            <Text className="text-sm font-semibold text-gray-700 mb-1">Descripción de gravedad</Text>
+                            <TextInput
+                              className="border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Detalle de la gravedad del afectado"
+                              value={d.descripcionGravedad || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(inm.duenos||[])];
+                                next[di] = { ...(next[di]||{}), descripcionGravedad: v };
+                                updateInmueble(idx, { ...inm, duenos: next });
+                              }}
+                            />
+                          </View>
+                          <View className="items-end">
+                            <TouchableOpacity onPress={()=>{
+                              const next = (inm.duenos||[]).filter((_,i)=> i!==di);
+                              updateInmueble(idx, { ...inm, duenos: next });
+                            }}>
+                              <Text className="text-red-600">Eliminar dueño</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))}
+                      <TouchableOpacity onPress={()=>{
+                        const next = [...(inm.duenos||[]), { nombreCompleto:'', run:'', telefono:'', esEmpresa: false, descripcionGravedad:'' }];
+                        updateInmueble(idx, { ...inm, duenos: next });
+                      }} className="mb-3">
+                        <Text className="text-blue-600 font-semibold">+ Agregar dueño</Text>
+                      </TouchableOpacity>
+
+                      {/* Habitantes */}
+                      <Text className="text-sm font-semibold text-gray-800 mb-2">Habitantes</Text>
+                      {(inm.habitantes||[]).map((h, hi) => (
+                        <View key={`${inm.id}-h-${hi}`} className="bg-white rounded-lg p-2 mb-2 border border-gray-200">
+                          <View className="mb-2">
+                            <TextInput
+                              className="border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Nombre completo"
+                              value={h.nombreCompleto || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(inm.habitantes||[])];
+                                next[hi] = { ...(next[hi]||{}), nombreCompleto: v };
+                                updateInmueble(idx, { ...inm, habitantes: next });
+                              }}
+                            />
+                          </View>
+                          <View className="flex-row gap-2">
+                            <TextInput
+                              className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="RUN"
+                              value={h.run || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(inm.habitantes||[])];
+                                next[hi] = { ...(next[hi]||{}), run: v };
+                                updateInmueble(idx, { ...inm, habitantes: next });
+                              }}
+                            />
+                            <TextInput
+                              className="w-24 border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Edad"
+                              keyboardType="numeric"
+                              value={String(h.edad || '')}
+                              onChangeText={(v)=> {
+                                const next = [...(inm.habitantes||[])];
+                                next[hi] = { ...(next[hi]||{}), edad: v.replace(/[^0-9]/g,'') };
+                                updateInmueble(idx, { ...inm, habitantes: next });
+                              }}
+                            />
+                          </View>
+                          <View className="mt-2 mb-2">
+                            <TextInput
+                              className="border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Teléfono"
+                              value={h.telefono || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(inm.habitantes||[])];
+                                next[hi] = { ...(next[hi]||{}), telefono: v };
+                                updateInmueble(idx, { ...inm, habitantes: next });
+                              }}
+                            />
+                          </View>
+                          <View className="mb-2">
+                            <Text className="text-sm font-semibold text-gray-700 mb-1">Descripción de gravedad</Text>
+                            <TextInput
+                              className="border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Detalle de la gravedad del afectado"
+                              value={h.descripcionGravedad || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(inm.habitantes||[])];
+                                next[hi] = { ...(next[hi]||{}), descripcionGravedad: v };
+                                updateInmueble(idx, { ...inm, habitantes: next });
+                              }}
+                            />
+                          </View>
+                          <View className="items-end">
+                            <TouchableOpacity onPress={()=>{
+                              const next = (inm.habitantes||[]).filter((_,i)=> i!==hi);
+                              updateInmueble(idx, { ...inm, habitantes: next });
+                            }}>
+                              <Text className="text-red-600">Eliminar habitante</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))}
+                      <TouchableOpacity onPress={()=>{
+                        const next = [...(inm.habitantes||[]), { nombreCompleto:'', run:'', edad:'', telefono:'', descripcionGravedad:'' }];
+                        updateInmueble(idx, { ...inm, habitantes: next });
+                      }}>
+                        <Text className="text-blue-600 font-semibold">+ Agregar habitante</Text>
+                      </TouchableOpacity>
                     </View>
                   ))}
                 </>
@@ -945,15 +1388,293 @@ export default function CrearParteScreen({ navigation }) {
                   </TouchableOpacity>
                   {vehiculos.map((veh, idx) => (
                     <View key={veh.id} className="bg-gray-50 rounded-lg p-3 mb-3">
-                      <View className="flex-row justify-between items-center mb-2">
+                      <View className="flex-row justify-between items-center mb-3">
                         <Text className="font-bold text-gray-700">Vehículo {idx + 1}</Text>
                         <TouchableOpacity onPress={() => removeVehiculo(idx)}>
                           <Ionicons name="trash-outline" size={20} color="#ef4444" />
                         </TouchableOpacity>
                       </View>
-                      <Text className="text-xs text-gray-500 mb-2">
-                        (Campos básicos - implementar completo según necesidad)
-                      </Text>
+
+                      {/* Identificación vehículo */}
+                      <View className="flex-row gap-2">
+                        <View className="w-36 mb-3">
+                          <Text className="text-sm font-semibold text-gray-700 mb-1">Patente</Text>
+                          <TextInput
+                            className="border border-gray-300 rounded-lg px-3 py-2"
+                            placeholder="ABC123"
+                            value={veh.patente || ''}
+                            onChangeText={(v)=> updateVehiculo(idx, { ...veh, patente: v })}
+                          />
+                        </View>
+                        <View className="flex-1 mb-3">
+                          <Text className="text-sm font-semibold text-gray-700 mb-1">Marca</Text>
+                          <TextInput
+                            className="border border-gray-300 rounded-lg px-3 py-2"
+                            placeholder="Marca"
+                            value={veh.marca || ''}
+                            onChangeText={(v)=> updateVehiculo(idx, { ...veh, marca: v })}
+                          />
+                        </View>
+                        <View className="flex-1 mb-3">
+                          <Text className="text-sm font-semibold text-gray-700 mb-1">Modelo</Text>
+                          <TextInput
+                            className="border border-gray-300 rounded-lg px-3 py-2"
+                            placeholder="Modelo"
+                            value={veh.modelo || ''}
+                            onChangeText={(v)=> updateVehiculo(idx, { ...veh, modelo: v })}
+                          />
+                        </View>
+                      </View>
+
+                      <View className="flex-row gap-2">
+                        <View className="w-28 mb-3">
+                          <Text className="text-sm font-semibold text-gray-700 mb-1">Año</Text>
+                          <TextInput
+                            className="border border-gray-300 rounded-lg px-3 py-2"
+                            placeholder="2020"
+                            keyboardType="numeric"
+                            value={String(veh.anio || '')}
+                            onChangeText={(v)=> updateVehiculo(idx, { ...veh, anio: v.replace(/[^0-9]/g,'') })}
+                          />
+                        </View>
+                        <View className="flex-1 mb-3">
+                          <Text className="text-sm font-semibold text-gray-700 mb-1">Color</Text>
+                          <TextInput
+                            className="border border-gray-300 rounded-lg px-3 py-2"
+                            placeholder="Color"
+                            value={veh.color || ''}
+                            onChangeText={(v)=> updateVehiculo(idx, { ...veh, color: v })}
+                          />
+                        </View>
+                      </View>
+
+                      <View className="mb-3">
+                        <Text className="text-sm font-semibold text-gray-700 mb-1">Daños del vehículo</Text>
+                        <TextInput
+                          className="border border-gray-300 rounded-lg px-3 py-2"
+                          placeholder="Descripción de daños"
+                          value={veh.danos_vehiculo || ''}
+                          onChangeText={(v)=> updateVehiculo(idx, { ...veh, danos_vehiculo: v })}
+                        />
+                      </View>
+
+                      {/* Dueños */}
+                      <Text className="text-sm font-semibold text-gray-800 mb-2">Dueños</Text>
+                      {(veh.duenos||[]).map((d, di) => (
+                        <View key={`${veh.id}-d-${di}`} className="bg-white rounded-lg p-2 mb-2 border border-gray-200">
+                          <View className="mb-2">
+                            <TextInput
+                              className="border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Nombre completo"
+                              value={d.nombreCompleto || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(veh.duenos||[])];
+                                next[di] = { ...(next[di]||{}), nombreCompleto: v };
+                                updateVehiculo(idx, { ...veh, duenos: next });
+                              }}
+                            />
+                          </View>
+                          <View className="flex-row gap-2">
+                            <TextInput
+                              className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="RUN"
+                              value={d.run || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(veh.duenos||[])];
+                                next[di] = { ...(next[di]||{}), run: v };
+                                updateVehiculo(idx, { ...veh, duenos: next });
+                              }}
+                            />
+                            <TextInput
+                              className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Teléfono"
+                              value={d.telefono || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(veh.duenos||[])];
+                                next[di] = { ...(next[di]||{}), telefono: v };
+                                updateVehiculo(idx, { ...veh, duenos: next });
+                              }}
+                            />
+                          </View>
+                          <View className="flex-row items-center justify-between my-2">
+                            <Text className="text-sm font-semibold text-gray-700">¿Es empresa?</Text>
+                            <Switch
+                              value={!!d.esEmpresa}
+                              onValueChange={(val)=> {
+                                const next = [...(veh.duenos||[])];
+                                next[di] = { ...(next[di]||{}), esEmpresa: val };
+                                updateVehiculo(idx, { ...veh, duenos: next });
+                              }}
+                            />
+                          </View>
+                          <View className="mb-2">
+                            <Text className="text-sm font-semibold text-gray-700 mb-1">Descripción de gravedad</Text>
+                            <TextInput
+                              className="border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Detalle de la gravedad del afectado"
+                              value={d.descripcionGravedad || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(veh.duenos||[])];
+                                next[di] = { ...(next[di]||{}), descripcionGravedad: v };
+                                updateVehiculo(idx, { ...veh, duenos: next });
+                              }}
+                            />
+                          </View>
+                          <View className="items-end">
+                            <TouchableOpacity onPress={()=>{
+                              const next = (veh.duenos||[]).filter((_,i)=> i!==di);
+                              updateVehiculo(idx, { ...veh, duenos: next });
+                            }}>
+                              <Text className="text-red-600">Eliminar dueño</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))}
+                      <TouchableOpacity onPress={()=>{
+                        const next = [...(veh.duenos||[]), { nombreCompleto:'', run:'', telefono:'', esEmpresa: false, descripcionGravedad:'' }];
+                        updateVehiculo(idx, { ...veh, duenos: next });
+                      }} className="mb-3">
+                        <Text className="text-blue-600 font-semibold">+ Agregar dueño</Text>
+                      </TouchableOpacity>
+
+                      {/* Chofer */}
+                      <Text className="text-sm font-semibold text-gray-800 mb-2 mt-3">Chofer (opcional)</Text>
+                      {veh.chofer ? (
+                        <View className="bg-white rounded-lg p-2 mb-2 border border-gray-200">
+                          <View className="mb-2">
+                            <TextInput
+                              className="border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Nombre completo"
+                              value={veh.chofer.nombreCompleto || ''}
+                              onChangeText={(v)=> updateVehiculo(idx, { ...veh, chofer: { ...(veh.chofer||{}), nombreCompleto: v } })}
+                            />
+                          </View>
+                          <View className="flex-row gap-2">
+                            <TextInput
+                              className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="RUN"
+                              value={veh.chofer.run || ''}
+                              onChangeText={(v)=> updateVehiculo(idx, { ...veh, chofer: { ...(veh.chofer||{}), run: v } })}
+                            />
+                            <TextInput
+                              className="w-24 border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Edad"
+                              keyboardType="numeric"
+                              value={String(veh.chofer.edad || '')}
+                              onChangeText={(v)=> updateVehiculo(idx, { ...veh, chofer: { ...(veh.chofer||{}), edad: v.replace(/[^0-9]/g,'') } })}
+                            />
+                          </View>
+                          <View className="mt-2 mb-2">
+                            <TextInput
+                              className="border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Teléfono"
+                              value={veh.chofer.telefono || ''}
+                              onChangeText={(v)=> updateVehiculo(idx, { ...veh, chofer: { ...(veh.chofer||{}), telefono: v } })}
+                            />
+                          </View>
+                          <View className="mb-2">
+                            <Text className="text-sm font-semibold text-gray-700 mb-1">Descripción de gravedad</Text>
+                            <TextInput
+                              className="border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Detalle de la gravedad del afectado"
+                              value={veh.chofer.descripcionGravedad || ''}
+                              onChangeText={(v)=> updateVehiculo(idx, { ...veh, chofer: { ...(veh.chofer||{}), descripcionGravedad: v } })}
+                            />
+                          </View>
+                          <View className="items-end">
+                            <TouchableOpacity onPress={()=> updateVehiculo(idx, { ...veh, chofer: null })}>
+                              <Text className="text-red-600">Eliminar chofer</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ) : (
+                        <TouchableOpacity onPress={()=>{
+                          updateVehiculo(idx, { ...veh, chofer: { nombreCompleto:'', run:'', edad:'', telefono:'', descripcionGravedad:'' } });
+                        }} className="mb-3">
+                          <Text className="text-blue-600 font-semibold">+ Agregar chofer</Text>
+                        </TouchableOpacity>
+                      )}
+
+                      {/* Pasajeros */}
+                      <Text className="text-sm font-semibold text-gray-800 mb-2 mt-3">Pasajeros</Text>
+                      {(veh.pasajeros||[]).map((p, pi) => (
+                        <View key={`${veh.id}-p-${pi}`} className="bg-white rounded-lg p-2 mb-2 border border-gray-200">
+                          <View className="mb-2">
+                            <TextInput
+                              className="border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Nombre completo"
+                              value={p.nombreCompleto || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(veh.pasajeros||[])];
+                                next[pi] = { ...(next[pi]||{}), nombreCompleto: v };
+                                updateVehiculo(idx, { ...veh, pasajeros: next });
+                              }}
+                            />
+                          </View>
+                          <View className="flex-row gap-2">
+                            <TextInput
+                              className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="RUN"
+                              value={p.run || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(veh.pasajeros||[])];
+                                next[pi] = { ...(next[pi]||{}), run: v };
+                                updateVehiculo(idx, { ...veh, pasajeros: next });
+                              }}
+                            />
+                            <TextInput
+                              className="w-24 border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Edad"
+                              keyboardType="numeric"
+                              value={String(p.edad || '')}
+                              onChangeText={(v)=> {
+                                const next = [...(veh.pasajeros||[])];
+                                next[pi] = { ...(next[pi]||{}), edad: v.replace(/[^0-9]/g,'') };
+                                updateVehiculo(idx, { ...veh, pasajeros: next });
+                              }}
+                            />
+                          </View>
+                          <View className="mt-2 mb-2">
+                            <TextInput
+                              className="border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Teléfono"
+                              value={p.telefono || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(veh.pasajeros||[])];
+                                next[pi] = { ...(next[pi]||{}), telefono: v };
+                                updateVehiculo(idx, { ...veh, pasajeros: next });
+                              }}
+                            />
+                          </View>
+                          <View className="mb-2">
+                            <Text className="text-sm font-semibold text-gray-700 mb-1">Descripción de gravedad</Text>
+                            <TextInput
+                              className="border border-gray-300 rounded-lg px-3 py-2"
+                              placeholder="Detalle de la gravedad del afectado"
+                              value={p.descripcionGravedad || ''}
+                              onChangeText={(v)=> {
+                                const next = [...(veh.pasajeros||[])];
+                                next[pi] = { ...(next[pi]||{}), descripcionGravedad: v };
+                                updateVehiculo(idx, { ...veh, pasajeros: next });
+                              }}
+                            />
+                          </View>
+                          <View className="items-end">
+                            <TouchableOpacity onPress={()=>{
+                              const next = (veh.pasajeros||[]).filter((_,i)=> i!==pi);
+                              updateVehiculo(idx, { ...veh, pasajeros: next });
+                            }}>
+                              <Text className="text-red-600">Eliminar pasajero</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))}
+                      <TouchableOpacity onPress={()=>{
+                        const next = [...(veh.pasajeros||[]), { nombreCompleto:'', run:'', edad:'', telefono:'', descripcionGravedad:'' }];
+                        updateVehiculo(idx, { ...veh, pasajeros: next });
+                      }}>
+                        <Text className="text-blue-600 font-semibold">+ Agregar pasajero</Text>
+                      </TouchableOpacity>
                     </View>
                   ))}
                 </>
@@ -976,7 +1697,24 @@ export default function CrearParteScreen({ navigation }) {
                 <Text className="text-white font-semibold">+ Agregar Unidad</Text>
               </TouchableOpacity>
 
-              {materialMayor.map((unidad, idx) => (
+              {materialMayor.map((unidad, idx) => {
+                // Evitar duplicados de Carro y Conductor entre unidades
+                const usedUnidadIds = materialMayor.map(r => r.unidadId).filter(Boolean).map(String);
+                const usedConductorIds = materialMayor.map(r => r.conductorId).filter(Boolean).map(String);
+                const unidadIdStr = unidad.unidadId ? String(unidad.unidadId) : '';
+                const conductorIdStr = unidad.conductorId ? String(unidad.conductorId) : '';
+
+                const carrosDisponibles = carros.filter(c => {
+                  const id = String(c.id);
+                  return id === unidadIdStr || !usedUnidadIds.includes(id);
+                });
+
+                const conductoresDisponibles = conductores.filter(b => {
+                  const id = String(b.id);
+                  return id === conductorIdStr || !usedConductorIds.includes(id);
+                });
+
+                return (
                 <View key={unidad.id} className="bg-gray-50 rounded-lg p-3 mb-3">
                   <View className="flex-row justify-between items-center mb-2">
                     <Text className="font-bold text-gray-700">Unidad {idx + 1}</Text>
@@ -989,7 +1727,7 @@ export default function CrearParteScreen({ navigation }) {
                     label="Carro"
                     selectedValue={unidad.unidadId}
                     onValueChange={(val) => updateUnidad(idx, 'unidadId', val)}
-                    options={carros.map(c => ({ value: c.id, label: c.patente || `Carro #${c.id}` }))}
+                    options={carrosDisponibles.map(c => ({ value: c.id, label: c.patente || `Carro #${c.id}` }))}
                     placeholder="Seleccione carro"
                   />
 
@@ -997,7 +1735,7 @@ export default function CrearParteScreen({ navigation }) {
                     label="Conductor"
                     selectedValue={unidad.conductorId}
                     onValueChange={(val) => updateUnidad(idx, 'conductorId', val)}
-                    options={bomberos.map(b => ({ value: b.id, label: nombreBombero(b) }))}
+                    options={conductoresDisponibles.map(b => ({ value: b.id, label: nombreBombero(b) }))}
                     placeholder="Seleccione conductor"
                   />
 
@@ -1043,7 +1781,7 @@ export default function CrearParteScreen({ navigation }) {
                     </View>
                   </View>
                 </View>
-              ))}
+              )})}
             </View>
           )}
 
@@ -1059,19 +1797,102 @@ export default function CrearParteScreen({ navigation }) {
                 <Text className="text-white font-semibold">+ Agregar Accidentado</Text>
               </TouchableOpacity>
 
-              {accidentados.map((acc, idx) => (
-                <View key={acc.id} className="bg-red-50 rounded-lg p-3 mb-3">
-                  <View className="flex-row justify-between items-center mb-2">
-                    <Text className="font-bold text-gray-700">Accidentado {idx + 1}</Text>
-                    <TouchableOpacity onPress={() => removeAccidentado(idx)}>
-                      <Ionicons name="trash-outline" size={20} color="#ef4444" />
-                    </TouchableOpacity>
+              {accidentados.map((acc, idx) => {
+                const compId = String(acc.companiaId || '');
+                const bomberosCompania = bomberosByCompania[compId] || [];
+                const loadingFila = !!loadingBomberosByCompania[compId];
+                const errorFila = errorBomberosByCompania[compId] || '';
+                return (
+                  <View key={acc.id} className="bg-red-50 rounded-lg p-3 mb-3">
+                    <View className="flex-row justify-between items-center mb-2">
+                      <Text className="font-bold text-gray-700">Accidentado {idx + 1}</Text>
+                      <TouchableOpacity onPress={() => removeAccidentado(idx)}>
+                        <Ionicons name="trash-outline" size={20} color="#ef4444" />
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Compañía */}
+                    <SelectField
+                      label="Compañía"
+                      selectedValue={acc.companiaId}
+                      onValueChange={(val) => {
+                        updateAccidentado(idx, { ...acc, companiaId: val, bomberoId: '' });
+                        ensureBomberosForCompania(val);
+                      }}
+                      options={companias.map(c => ({ value: c.id, label: c.nombre || `Compañía #${c.id}` }))}
+                      placeholder="Seleccione compañía"
+                    />
+                    {/* Bombero (dependiente de compañía) */}
+                    <SelectField
+                      label="Bombero"
+                      selectedValue={acc.bomberoId}
+                      onValueChange={(val) => updateAccidentado(idx, { ...acc, bomberoId: val })}
+                      options={bomberosCompania.map(b => ({ value: b.id, label: nombreBombero(b) }))}
+                      placeholder={compId ? (loadingFila ? 'Cargando bomberos…' : 'Seleccione bombero') : 'Seleccione compañía primero'}
+                    />
+                    {errorFila ? (
+                      <Text className="text-red-600 text-xs mb-2">{errorFila}</Text>
+                    ) : null}
+
+                    {/* RUT (opcional, como en web) */}
+                    <View className="mb-3">
+                      <Text className="text-sm font-semibold text-gray-700 mb-1">RUT</Text>
+                      <TextInput
+                        className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                        placeholder="RUN/RUT del accidentado"
+                        value={acc.rut || ''}
+                        onChangeText={(v) => updateAccidentado(idx, { ...acc, rut: v })}
+                      />
+                    </View>
+
+                    {/* Lesiones */}
+                    <View className="mb-3">
+                      <Text className="text-sm font-semibold text-gray-700 mb-1">Lesiones</Text>
+                      <TextInput
+                        className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                        placeholder="Detalle de lesiones"
+                        value={acc.lesiones || ''}
+                        onChangeText={(v) => updateAccidentado(idx, { ...acc, lesiones: v })}
+                        multiline
+                      />
+                    </View>
+
+                    {/* Constancia */}
+                    <View className="mb-3">
+                      <Text className="text-sm font-semibold text-gray-700 mb-1">Constancia</Text>
+                      <TextInput
+                        className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                        placeholder="N° o descripción de constancia"
+                        value={acc.constancia || ''}
+                        onChangeText={(v) => updateAccidentado(idx, { ...acc, constancia: v })}
+                      />
+                    </View>
+
+                    {/* Comisaría */}
+                    <View className="mb-3">
+                      <Text className="text-sm font-semibold text-gray-700 mb-1">Comisaría</Text>
+                      <TextInput
+                        className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                        placeholder="Nombre de la comisaría"
+                        value={acc.comisaria || ''}
+                        onChangeText={(v) => updateAccidentado(idx, { ...acc, comisaria: v })}
+                      />
+                    </View>
+
+                    {/* Acciones */}
+                    <View className="mb-1">
+                      <Text className="text-sm font-semibold text-gray-700 mb-1">Acciones</Text>
+                      <TextInput
+                        className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                        placeholder="Acciones tomadas"
+                        value={acc.acciones || ''}
+                        onChangeText={(v) => updateAccidentado(idx, { ...acc, acciones: v })}
+                        multiline
+                      />
+                    </View>
                   </View>
-                  <Text className="text-xs text-gray-500">
-                    (Implementar campos según necesidad)
-                  </Text>
-                </View>
-              ))}
+                );
+              })}
 
               <Text className="text-lg font-bold text-gray-900 mb-4 mt-6">Otros Servicios</Text>
               
@@ -1082,17 +1903,69 @@ export default function CrearParteScreen({ navigation }) {
                 <Text className="text-white font-semibold">+ Agregar Servicio</Text>
               </TouchableOpacity>
 
-              {otrosServicios.map((serv, idx) => (
-                <View key={serv.id} className="bg-purple-50 rounded-lg p-3 mb-3">
+              {otrosServicios.map((row, idx) => (
+                <View key={row.id} className="bg-purple-50 rounded-lg p-3 mb-3">
                   <View className="flex-row justify-between items-center mb-2">
                     <Text className="font-bold text-gray-700">Servicio {idx + 1}</Text>
                     <TouchableOpacity onPress={() => removeOtroServicio(idx)}>
                       <Ionicons name="trash-outline" size={20} color="#ef4444" />
                     </TouchableOpacity>
                   </View>
-                  <Text className="text-xs text-gray-500">
-                    (Implementar campos según necesidad)
-                  </Text>
+
+                  {/* Servicio (catálogo) */}
+                  <SelectField
+                    label="Servicio"
+                    selectedValue={row.servicioId}
+                    onValueChange={(val) => updateOtroServicio(idx, { ...row, servicioId: val })}
+                    options={servicios.map(s => ({ value: s.id, label: s.nombre ?? s.label ?? s.descripcion ?? `Servicio ${s.id}` }))}
+                    placeholder={servicios.length ? 'Seleccione servicio' : 'No hay servicios disponibles'}
+                  />
+
+                  {/* Tipo de unidad y Responsable */}
+                  <View className="flex-row gap-2">
+                    <View className="flex-1 mb-3">
+                      <Text className="text-sm font-semibold text-gray-700 mb-1">Tipo de unidad</Text>
+                      <TextInput
+                        className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                        placeholder="Ej: Ambulancia, Patrulla..."
+                        value={row.tipoUnidad || ''}
+                        onChangeText={(v) => updateOtroServicio(idx, { ...row, tipoUnidad: v })}
+                      />
+                    </View>
+                    <View className="flex-1 mb-3">
+                      <Text className="text-sm font-semibold text-gray-700 mb-1">Responsable</Text>
+                      <TextInput
+                        className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                        placeholder="Nombre del responsable"
+                        value={row.responsable || ''}
+                        onChangeText={(v) => updateOtroServicio(idx, { ...row, responsable: v })}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Personal */}
+                  <View className="mb-3">
+                    <Text className="text-sm font-semibold text-gray-700 mb-1">Personal</Text>
+                    <TextInput
+                      className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                      placeholder="Cantidad de personal"
+                      value={String(row.personal || '')}
+                      onChangeText={(v) => updateOtroServicio(idx, { ...row, personal: v.replace(/[^0-9]/g,'') })}
+                      keyboardType="numeric"
+                    />
+                  </View>
+
+                  {/* Observaciones */}
+                  <View className="mb-1">
+                    <Text className="text-sm font-semibold text-gray-700 mb-1">Observaciones</Text>
+                    <TextInput
+                      className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                      placeholder="Observaciones del servicio"
+                      value={row.observaciones || ''}
+                      onChangeText={(v) => updateOtroServicio(idx, { ...row, observaciones: v })}
+                      multiline
+                    />
+                  </View>
                 </View>
               ))}
             </View>
@@ -1105,56 +1978,201 @@ export default function CrearParteScreen({ navigation }) {
               {errors.asistenciaLugar && (
                 <Text className="text-red-500 text-sm mb-2">{errors.asistenciaLugar}</Text>
               )}
-              
-              <Text className="text-base font-semibold text-gray-800 mb-2">En el Lugar</Text>
-              <View className="bg-blue-50 rounded-lg p-3 mb-4">
-                {bomberos.length === 0 ? (
-                  <Text className="text-gray-500">No hay bomberos disponibles</Text>
-                ) : (
-                  bomberos.map(b => (
-                    <View key={b.id} className="flex-row items-center justify-between py-2 border-b border-blue-100">
-                      <Text className="text-gray-700">{nombreBombero(b)}</Text>
-                      <TouchableOpacity
-                        onPress={() => toggleLugar(String(b.id), !asistenciaLugar[b.id])}
-                        className={`w-12 h-6 rounded-full ${
-                          asistenciaLugar[b.id] ? 'bg-blue-600' : 'bg-gray-300'
-                        }`}
-                      >
-                        <View
-                          className={`w-5 h-5 rounded-full bg-white m-0.5 ${
-                            asistenciaLugar[b.id] ? 'self-end' : 'self-start'
-                          }`}
-                        />
-                      </TouchableOpacity>
-                    </View>
-                  ))
+
+              {/* Buscador */}
+              <View className="mb-3">
+                <Text className="text-sm font-semibold text-gray-700 mb-1">Buscar voluntario</Text>
+                <TextInput
+                  className="border border-gray-300 rounded-lg px-3 py-2"
+                  placeholder="Escribe para filtrar por nombre…"
+                  value={searchAsistencia}
+                  onChangeText={setSearchAsistencia}
+                />
+              </View>
+
+              {/* Información de paginación */}
+              <View className="flex-row justify-between items-center mb-3">
+                <View>
+                  <Text className="text-sm text-gray-700">
+                    Mostrando {paginatedBomberos.length} de {filteredBomberos.length} bomberos
+                  </Text>
+                  <View className="flex-row gap-3 mt-1">
+                    <Text className="text-xs text-gray-600">En el lugar: <Text className="font-semibold text-blue-600">{totalLugar}</Text></Text>
+                    <Text className="text-xs text-gray-600">En el cuartel: <Text className="font-semibold text-green-600">{totalCuartel}</Text></Text>
+                  </View>
+                </View>
+                {totalPages > 1 && (
+                  <Text className="text-xs text-gray-500">Página {currentPage} de {totalPages}</Text>
                 )}
               </View>
 
-              <Text className="text-base font-semibold text-gray-800 mb-2">En Cuartel</Text>
-              <View className="bg-green-50 rounded-lg p-3 mb-4">
-                {bomberos.length === 0 ? (
-                  <Text className="text-gray-500">No hay bomberos disponibles</Text>
-                ) : (
-                  bomberos.map(b => (
-                    <View key={b.id} className="flex-row items-center justify-between py-2 border-b border-green-100">
-                      <Text className="text-gray-700">{nombreBombero(b)}</Text>
-                      <TouchableOpacity
-                        onPress={() => toggleCuartel(String(b.id), !asistenciaCuartel[b.id])}
-                        className={`w-12 h-6 rounded-full ${
-                          asistenciaCuartel[b.id] ? 'bg-green-600' : 'bg-gray-300'
-                        }`}
-                      >
-                        <View
-                          className={`w-5 h-5 rounded-full bg-white m-0.5 ${
-                            asistenciaCuartel[b.id] ? 'self-end' : 'self-start'
-                          }`}
-                        />
-                      </TouchableOpacity>
+              {/* Tabla compacta con paginación */}
+              <View className="rounded-lg border border-gray-200 overflow-hidden mb-3">
+                {/* Header */}
+                <View className="flex-row bg-gray-50 px-3 py-2 border-b border-gray-200">
+                  <Text className="flex-1 text-xs font-semibold text-gray-600">Voluntario</Text>
+                  <Text className="w-28 text-xs font-semibold text-gray-600 text-center">En el lugar</Text>
+                  <Text className="w-28 text-xs font-semibold text-gray-600 text-center">En el cuartel</Text>
+                </View>
+
+                {/* Lista paginada sin scroll interno (más eficiente) */}
+                <View>
+                  {paginatedBomberos.map(b => {
+                    const presentLugar = !!asistenciaLugar[b.id];
+                    const presentCuartel = !!asistenciaCuartel[b.id];
+                    return (
+                      <View key={b.id} className="flex-row items-center px-3 py-2 border-b border-gray-100 bg-white">
+                        <Text className="flex-1 text-gray-800">{nombreBombero(b)}</Text>
+
+                        {/* En el lugar */}
+                        <View className="w-28 items-center">
+                          <TouchableOpacity
+                            onPress={() => toggleLugar(String(b.id), !presentLugar)}
+                            className={`w-12 h-6 rounded-full ${presentLugar ? 'bg-blue-600' : 'bg-gray-300'}`}
+                          >
+                            <View className={`w-5 h-5 rounded-full bg-white m-0.5 ${presentLugar ? 'self-end' : 'self-start'}`} />
+                          </TouchableOpacity>
+                        </View>
+
+                        {/* En el cuartel */}
+                        <View className="w-28 items-center">
+                          <TouchableOpacity
+                            onPress={() => toggleCuartel(String(b.id), !presentCuartel)}
+                            className={`w-12 h-6 rounded-full ${presentCuartel ? 'bg-green-600' : 'bg-gray-300'}`}
+                          >
+                            <View className={`w-5 h-5 rounded-full bg-white m-0.5 ${presentCuartel ? 'self-end' : 'self-start'}`} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })}
+
+                  {paginatedBomberos.length === 0 && (
+                    <View className="px-3 py-6">
+                      <Text className="text-gray-500 text-sm text-center">
+                        {searchAsistencia ? 'No se encontraron bomberos con ese filtro' : 'No hay bomberos disponibles'}
+                      </Text>
                     </View>
-                  ))
-                )}
+                  )}
+                </View>
               </View>
+
+              {/* Controles de paginación mejorados */}
+              {totalPages > 1 && (
+                <View className="gap-2">
+                  {/* Navegación principal */}
+                  <View className="flex-row justify-between items-center gap-2">
+                    <TouchableOpacity
+                      onPress={() => setCurrentPage(1)}
+                      disabled={currentPage === 1}
+                      className={`py-2 px-3 rounded-lg border ${
+                        currentPage === 1 
+                          ? 'bg-gray-100 border-gray-200' 
+                          : 'bg-white border-gray-300'
+                      }`}
+                    >
+                      <Text className={currentPage === 1 ? 'text-gray-400' : 'text-gray-700'}>
+                        ⟪
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                      className={`flex-1 py-2 px-4 rounded-lg border ${
+                        currentPage === 1 
+                          ? 'bg-gray-100 border-gray-200' 
+                          : 'bg-white border-gray-300'
+                      }`}
+                    >
+                      <Text className={`text-center font-semibold ${
+                        currentPage === 1 ? 'text-gray-400' : 'text-gray-700'
+                      }`}>
+                        ← Anterior
+                      </Text>
+                    </TouchableOpacity>
+
+                    <View className="px-4 py-2 bg-blue-50 rounded-lg border border-blue-200">
+                      <Text className="text-sm font-bold text-blue-700">
+                        {currentPage} / {totalPages}
+                      </Text>
+                    </View>
+
+                    <TouchableOpacity
+                      onPress={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                      className={`flex-1 py-2 px-4 rounded-lg border ${
+                        currentPage === totalPages 
+                          ? 'bg-gray-100 border-gray-200' 
+                          : 'bg-white border-gray-300'
+                      }`}
+                    >
+                      <Text className={`text-center font-semibold ${
+                        currentPage === totalPages ? 'text-gray-400' : 'text-gray-700'
+                      }`}>
+                        Siguiente →
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => setCurrentPage(totalPages)}
+                      disabled={currentPage === totalPages}
+                      className={`py-2 px-3 rounded-lg border ${
+                        currentPage === totalPages 
+                          ? 'bg-gray-100 border-gray-200' 
+                          : 'bg-white border-gray-300'
+                      }`}
+                    >
+                      <Text className={currentPage === totalPages ? 'text-gray-400' : 'text-gray-700'}>
+                        ⟫
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Acceso rápido a páginas */}
+                  {totalPages > 3 && (
+                    <View className="flex-row flex-wrap gap-1 justify-center">
+                      {Array.from({ length: Math.min(totalPages, 10) }, (_, i) => {
+                        const pageNum = i + 1;
+                        // Mostrar primeras 3, últimas 3, y cercanas a la actual
+                        const showPage = pageNum <= 3 || 
+                                        pageNum > totalPages - 3 || 
+                                        Math.abs(pageNum - currentPage) <= 1;
+                        
+                        if (!showPage) {
+                          // Mostrar "..." solo una vez entre grupos
+                          if (pageNum === 4 && currentPage > 5) {
+                            return (
+                              <Text key={`dots-${pageNum}`} className="px-2 py-1 text-gray-400">
+                                ⋯
+                              </Text>
+                            );
+                          }
+                          return null;
+                        }
+
+                        return (
+                          <TouchableOpacity
+                            key={pageNum}
+                            onPress={() => setCurrentPage(pageNum)}
+                            className={`px-3 py-1 rounded ${
+                              currentPage === pageNum
+                                ? 'bg-blue-600'
+                                : 'bg-gray-200'
+                            }`}
+                          >
+                            <Text className={`text-xs font-semibold ${
+                              currentPage === pageNum ? 'text-white' : 'text-gray-700'
+                            }`}>
+                              {pageNum}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
           )}
         </ScrollView>

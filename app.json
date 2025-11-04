@@ -19,11 +19,20 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "package": "com.jpalma1414.pruebatailwind"
     },
+    "plugins": [
+      "./plugins/withCleartext.js"
+    ],
     "web": {
       "favicon": "./assets/favicon.png",
       "bundler": "metro"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "a3510e50-4548-42f4-b0ef-812cecdb1916"
+      }
     }
   }
 }

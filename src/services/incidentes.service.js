@@ -39,8 +39,23 @@ export const cambiarEstadoIncidente = async (id, { estado, idBombero }) => {
   }
 };
 
+// Borra un incidente por id. Backend valida que el último estado sea BORRADOR o CORREGIR.
+export const borrarIncidente = async (idIncidente) => {
+  if (!Number.isFinite(Number(idIncidente))) {
+    throw new Error('Id inválido');
+  }
+  try {
+    const resp = await apiClient.delete(`/parteEmergencia/incidente/${idIncidente}`);
+    return resp.data;
+  } catch (error) {
+    console.error('Error al borrar incidente:', error);
+    throw error.response?.data || error;
+  }
+};
+
 export default {
   getIncidentesResumen,
   getIncidentesRevision,
   cambiarEstadoIncidente,
+  borrarIncidente,
 };
