@@ -131,7 +131,7 @@ export default function DetalleParteScreen({ route, navigation }) {
             try {
               const comp = await getCompaniaById(compId);
               const compData = comp?.data ?? comp;
-              if (compData) {
+              if (compData) { 
                 companiasAccidentados.set(compId, compData);
               }
             } catch {
@@ -430,7 +430,13 @@ export default function DetalleParteScreen({ route, navigation }) {
             <Ionicons name="arrow-back" size={24} color="#fff" />
           </TouchableOpacity>
           <Text className="text-white text-lg font-bold">Reporte Emergencia {fechaIncidente}</Text>
-          <View style={{ width: 24 }} />
+          {puedeEnviar ? (
+            <TouchableOpacity onPress={() => navigation.navigate('EditarParte', { parteId })}>
+              <Ionicons name="create-outline" size={22} color="#fff" />
+            </TouchableOpacity>
+          ) : (
+            <View style={{ width: 24 }} />
+          )}
         </View>
       </View>
 
@@ -457,6 +463,7 @@ export default function DetalleParteScreen({ route, navigation }) {
             </TouchableOpacity>
           </View>
         )}
+
 
         {/* Información general */}
         <View className="bg-white border-b border-gray-200 p-4">

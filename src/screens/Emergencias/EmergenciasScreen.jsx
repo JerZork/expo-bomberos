@@ -69,6 +69,13 @@ const getColorStyles = (colorName) => {
   return COLOR_STYLES[normalizedColor] || COLOR_STYLES.slate;
 };
 
+// ==== Filtro de valores basura ====
+const safeString = (val) => {
+  if (val === null || val === undefined || val === '' || val === 'null' || val === 'NULL') return '';
+  const str = String(val).trim();
+  return str === 'null' || str === 'NULL' ? '' : str;
+};
+
 export default function EmergenciasScreen({ navigation }) {
   const [user, setUser] = useState(null);
   const [estados, setEstados] = useState([]);
@@ -104,9 +111,9 @@ export default function EmergenciasScreen({ navigation }) {
       const normalizedEstados = rawArray.map((e) => {
         const id = e?.id ?? e?.idEstado ?? e?.idReporteEstado ?? null;
         const rawKey = e?.codigo ?? e?.key ?? e?.nombre ?? e?.descripcion ?? e;
-        const label = e?.nombre ?? e?.label ?? String(rawKey).toUpperCase();
+        const label = safeString(e?.nombre ?? e?.label ?? String(rawKey).toUpperCase());
         const key = String(rawKey).toUpperCase();
-        const color = e?.color ?? 'slate';
+        const color = safeString(e?.color) || 'slate';
         
         return { id, key, label, color };
       });
@@ -147,11 +154,11 @@ export default function EmergenciasScreen({ navigation }) {
       const data = await getIncidentesResumen({ redactorId: userId });
       const normalized = (Array.isArray(data) ? data : []).map((x) => ({
         ...x,
-        estado: (x.estado || '').toUpperCase(),
-        tipo: x.tipo || '',
-        compania: x.compania || '',
-        creador: x.creador || '',
-        fecha: x.fecha || '',
+        estado: safeString(x.estado).toUpperCase() || '',
+        tipo: safeString(x.tipo),
+        compania: safeString(x.compania),
+        creador: safeString(x.creador),
+        fecha: safeString(x.fecha),
       }));
       
       setItems(normalized);
@@ -222,9 +229,9 @@ export default function EmergenciasScreen({ navigation }) {
     
     const search = searchText.toLowerCase();
     return partes.filter((p) => {
-      const desc = (p?.detalle?.descripcionPreliminar || p?.titulo || '').toLowerCase();
-      const clave = (p?.detalle?.claveRadial || '').toLowerCase();
-      const fecha = (p?.fecha || '').toLowerCase();
+      const desc = safeString(p?.detalle?.descripcionPreliminar || p?.titulo).toLowerCase();
+      const clave = safeString(p?.detalle?.claveRadial).toLowerCase();
+      const fecha = safeString(p?.fecha).toLowerCase();
       return desc.includes(search) || clave.includes(search) || fecha.includes(search);
     });
   }, [activeEstado, partesData, searchText]);
@@ -294,9 +301,9 @@ export default function EmergenciasScreen({ navigation }) {
 
   const getStreetNumber = (direccion) => {
     if (!direccion) return '';
-    if (typeof direccion === 'string') return direccion;
+    if (typeof direccion === 'string') return safeString(direccion);
     const { calle = '', numero = '' } = direccion;
-    return [calle, numero].filter(Boolean).join(' ');
+    return [safeString(calle), safeString(numero)].filter(Boolean).join(' ');
   };
 
   if (loading) {
@@ -415,11 +422,11 @@ export default function EmergenciasScreen({ navigation }) {
           </View>
         ) : (
           filteredPartes.map((parte) => {
-            const desc = parte?.detalle?.descripcionPreliminar || parte?.titulo || '';
-            const clave = parte?.detalle?.claveRadial || '';
+            const desc = safeString(parte?.detalle?.descripcionPreliminar || parte?.titulo);
+            const clave = safeString(parte?.detalle?.claveRadial);
             const shortDesc = desc.length > 60 ? `${desc.slice(0, 60)}...` : desc;
             const street = getStreetNumber(parte?.detalle?.direccion);
-            const estadoKey = (parte?.estado || '').toUpperCase();
+            const estadoKey = safeString(parte?.estado).toUpperCase() || '';
             const estadoColor = stateMetaByKey[estadoKey]?.color || 'slate';
             const colorStyles = getColorStyles(estadoColor);
             
@@ -432,7 +439,7 @@ export default function EmergenciasScreen({ navigation }) {
                 <View className="flex-row items-center justify-between mb-2">
                   <View className="flex-row items-center">
                     <Ionicons name="calendar-outline" size={14} color="#666" />
-                    <Text className="text-xs text-gray-600 ml-1">{parte?.fecha || ''}</Text>
+                    <Text className="text-xs text-gray-600 ml-1">{safeString(parte?.fecha)}</Text>
                   </View>
                   {clave ? (
                     <View className={`px-2 py-1 rounded border ${colorStyles.bg} ${colorStyles.border}`}>
@@ -451,7 +458,7 @@ export default function EmergenciasScreen({ navigation }) {
                 ) : null}
                 
                 <View className="flex-row items-center justify-between mt-2">
-                  <Text className="text-xs text-gray-500">{parte?.tipo || ''}</Text>
+                  <Text className="text-xs text-gray-500">{safeString(parte?.tipo)}</Text>
                 </View>
               </TouchableOpacity>
             );
@@ -470,7 +477,7 @@ export default function EmergenciasScreen({ navigation }) {
           {selectedParte ? (
             <>
               {/* Header del modal */}
-              <View className={`px-4 py-4 ${getColorStyles(stateMetaByKey[(selectedParte?.estado || '').toUpperCase()]?.color).bgActive}`}>
+              <View className={`px-4 py-4 ${getColorStyles(stateMetaByKey[safeString(selectedParte?.estado).toUpperCase() || '']?.color).bgActive}`}>
                 <View className="flex-row items-center justify-between">
                   <Text className="text-white text-xl font-bold">Detalle del Parte</Text>
                   <TouchableOpacity onPress={closeDetail}>
@@ -483,9 +490,9 @@ export default function EmergenciasScreen({ navigation }) {
                 {/* Estado */}
                 <View className="mb-4">
                   <Text className="text-xs text-gray-500 mb-1">Estado</Text>
-                  <View className={`px-3 py-2 rounded-lg border ${getColorStyles(stateMetaByKey[(selectedParte?.estado || '').toUpperCase()]?.color).bg} ${getColorStyles(stateMetaByKey[(selectedParte?.estado || '').toUpperCase()]?.color).border}`}>
-                    <Text className={`font-semibold ${getColorStyles(stateMetaByKey[(selectedParte?.estado || '').toUpperCase()]?.color).text}`}>
-                      {selectedParte?.estado || ''}
+                  <View className={`px-3 py-2 rounded-lg border ${getColorStyles(stateMetaByKey[safeString(selectedParte?.estado).toUpperCase() || '']?.color).bg} ${getColorStyles(stateMetaByKey[safeString(selectedParte?.estado).toUpperCase() || '']?.color).border}`}>
+                    <Text className={`font-semibold ${getColorStyles(stateMetaByKey[safeString(selectedParte?.estado).toUpperCase() || '']?.color).text}`}>
+                      {safeString(selectedParte?.estado)}
                     </Text>
                   </View>
                 </View>
@@ -493,14 +500,14 @@ export default function EmergenciasScreen({ navigation }) {
                 {/* Fecha */}
                 <View className="mb-4">
                   <Text className="text-xs text-gray-500 mb-1">Fecha</Text>
-                  <Text className="text-base text-gray-800">{selectedParte?.fecha || ''}</Text>
+                  <Text className="text-base text-gray-800">{safeString(selectedParte?.fecha)}</Text>
                 </View>
 
                 {/* Clave Radial */}
-                {selectedParte?.detalle?.claveRadial ? (
+                {safeString(selectedParte?.detalle?.claveRadial) ? (
                   <View className="mb-4">
                     <Text className="text-xs text-gray-500 mb-1">Clave Radial</Text>
-                    <Text className="text-base text-gray-800">{selectedParte.detalle.claveRadial}</Text>
+                    <Text className="text-base text-gray-800">{safeString(selectedParte.detalle.claveRadial)}</Text>
                   </View>
                 ) : null}
 
@@ -508,12 +515,12 @@ export default function EmergenciasScreen({ navigation }) {
                 <View className="mb-4">
                   <Text className="text-xs text-gray-500 mb-1">Descripción</Text>
                   <Text className="text-base text-gray-800">
-                    {selectedParte?.detalle?.descripcionPreliminar || selectedParte?.titulo || 'Sin descripción'}
+                    {safeString(selectedParte?.detalle?.descripcionPreliminar || selectedParte?.titulo) || 'Sin descripción'}
                   </Text>
                 </View>
 
                 {/* Dirección */}
-                {selectedParte?.detalle?.direccion ? (
+                {getStreetNumber(selectedParte?.detalle?.direccion) ? (
                   <View className="mb-4">
                     <Text className="text-xs text-gray-500 mb-1">Dirección</Text>
                     <Text className="text-base text-gray-800">
@@ -523,18 +530,18 @@ export default function EmergenciasScreen({ navigation }) {
                 ) : null}
 
                 {/* Tipo */}
-                {selectedParte?.tipo ? (
+                {safeString(selectedParte?.tipo) ? (
                   <View className="mb-4">
                     <Text className="text-xs text-gray-500 mb-1">Tipo</Text>
-                    <Text className="text-base text-gray-800">{selectedParte.tipo}</Text>
+                    <Text className="text-base text-gray-800">{safeString(selectedParte.tipo)}</Text>
                   </View>
                 ) : null}
 
                 {/* Compañía */}
-                {selectedParte?.compania ? (
+                {safeString(selectedParte?.compania) ? (
                   <View className="mb-4">
                     <Text className="text-xs text-gray-500 mb-1">Compañía</Text>
-                    <Text className="text-base text-gray-800">{selectedParte.compania}</Text>
+                    <Text className="text-base text-gray-800">{safeString(selectedParte.compania)}</Text>
                   </View>
                 ) : null}
               </ScrollView>
@@ -555,9 +562,31 @@ export default function EmergenciasScreen({ navigation }) {
                   </View>
                 </TouchableOpacity>
 
+                {/* Botón para editar parte - solo para estados BORRADOR o CORREGIR */}
+                {(() => {
+                  const estadoKey = safeString(selectedParte?.estado).toUpperCase() || '';
+                  const puedeEditar = estadoKey === 'BORRADOR' || estadoKey === 'CORREGIR';
+
+                  if (!puedeEditar) return null;
+                  return (
+                    <TouchableOpacity
+                      onPress={() => {
+                        closeDetail();
+                        navigation.navigate('EditarParte', { parteId: selectedParte?.id });
+                      }}
+                      className="bg-gray-700 py-3 rounded-lg items-center mb-3"
+                    >
+                      <View className="flex-row items-center">
+                        <Ionicons name="create-outline" size={20} color="#fff" />
+                        <Text className="text-white font-semibold ml-2">Editar parte</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })()}
+
                 {/* Botón de eliminar - solo para estados BORRADOR o CORREGIR */}
                 {(() => {
-                  const estadoKey = (selectedParte?.estado || '').toUpperCase();
+                  const estadoKey = safeString(selectedParte?.estado).toUpperCase() || '';
                   const puedeBorrar = estadoKey === 'BORRADOR' || estadoKey === 'CORREGIR';
                   
                   if (puedeBorrar) {

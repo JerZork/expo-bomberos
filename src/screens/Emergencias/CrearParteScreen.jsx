@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import {
   View,
   Text,
   ScrollView,
+  FlatList,
   TouchableOpacity,
   TextInput,
   Alert,
@@ -27,7 +28,9 @@ import {
 import { getBomberosPorCompania, getBomberosConLicencias, getMiCompania } from '../../services/bombero.service';
 import { getCarrosByCompania } from '../../services/carro.service';
 import { getServicios } from '../../services/servicios.service';
+import { formatRutForDisplay } from '../../helpers/rutFormatter';
 import { getCompanias } from '../../services/compania.service';
+import {getCompaniaDireccion} from '../../services/compania.service';
 
 // Helpers
 const genId = () => Math.random().toString(36).slice(2, 10);
@@ -53,6 +56,24 @@ const toYYYYMMDD = (d) => {
   const dd = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${dd}`;
 };
+
+const toDDMMYYYY = (d) => {
+  if (!d) return '';
+  const date = d instanceof Date ? d : new Date(d);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${dd}/${m}/${y}`;
+};
+
+const fromDDMMYYYY = (str) => {
+  if (!str) return '';
+  const parts = str.split('/');
+  if (parts.length !== 3) return '';
+  const [dd, mm, yyyy] = parts;
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 const toHHMM = (d) => {
   if (!d) return '';
   if (typeof d === 'string') return d.length >= 5 ? d.slice(0,5) : d;
@@ -61,21 +82,50 @@ const toHHMM = (d) => {
   return `${h}:${m}`;
 };
 
-// Campos reutilizables
-const FieldLabel = ({ children, required }) => (
+// Campos reutilizables - Optimizados con memo
+const FieldLabel = memo(({ children, required }) => (
   <Text className="text-sm font-semibold text-gray-700 mb-1">
     {children} {required ? <Text className="text-red-500">*</Text> : null}
   </Text>
-);
+));
+FieldLabel.displayName = 'FieldLabel';
 
-const DateField = ({ label, value, onChange, error }) => {
+const DateField = memo(({ label, value, onChange, error }) => {
   const [show, setShow] = useState(false);
-  const display = value ? toYYYYMMDD(value) : '';
+  const display = value || '';
+  
+  const handlePress = useCallback(() => setShow(true), []);
+  const handleHide = useCallback(() => setShow(false), []);
+  const handleDateChange = useCallback((e, date) => {
+    setShow(false);
+    if (date) onChange(toDDMMYYYY(date));
+  }, [onChange]);
+  
+  const handleWebDateChange = useCallback((text) => {
+    // Permitir solo números y /
+    const cleaned = text.replace(/[^0-9/]/g, '');
+    
+    // Auto-formatear mientras escribe
+    let formatted = cleaned;
+    if (cleaned.length >= 2 && !cleaned.includes('/')) {
+      formatted = cleaned.slice(0, 2) + '/' + cleaned.slice(2);
+    }
+    if (cleaned.length >= 5 && cleaned.split('/').length === 2) {
+      const parts = cleaned.split('/');
+      formatted = parts[0] + '/' + parts[1].slice(0, 2) + '/' + cleaned.slice(5);
+    }
+    
+    // Limitar longitud a 10 caracteres (DD/MM/AAAA)
+    if (formatted.length <= 10) {
+      onChange(formatted);
+    }
+  }, [onChange]);
+  
   return (
     <View className="mb-4">
       <FieldLabel required>{label}</FieldLabel>
       <TouchableOpacity
-        onPress={() => setShow(true)}
+        onPress={handlePress}
         className={`border ${error ? 'border-red-500' : 'border-gray-300'} rounded-lg px-3 py-2 bg-white`}
       >
         <Text className={display ? 'text-gray-900' : 'text-gray-400'}>
@@ -84,38 +134,45 @@ const DateField = ({ label, value, onChange, error }) => {
       </TouchableOpacity>
       {show && Platform.OS !== 'web' && (
         <DateTimePicker
-          value={value ? new Date(value) : new Date()}
+          value={value ? new Date(fromDDMMYYYY(value) || new Date()) : new Date()}
           mode="date"
           display="default"
-          onChange={(e, date) => {
-            setShow(false);
-            if (date) onChange(toYYYYMMDD(date));
-          }}
+          onChange={handleDateChange}
         />
       )}
       {Platform.OS === 'web' && show && (
         <TextInput
           autoFocus
           className={`mt-2 border ${error ? 'border-red-500' : 'border-gray-300'} rounded-lg px-3 py-2`}
-          placeholder="YYYY-MM-DD"
+          placeholder="DD/MM/AAAA"
           value={display}
-          onChangeText={onChange}
-          onBlur={() => setShow(false)}
+          onChangeText={handleWebDateChange}
+          onBlur={handleHide}
+          maxLength={10}
         />
       )}
       {error ? <Text className="text-red-500 text-xs mt-1">{error}</Text> : null}
     </View>
   );
-};
+});
+DateField.displayName = 'DateField';
 
-const TimeField = ({ label, value, onChange, error }) => {
+const TimeField = memo(({ label, value, onChange, error, required = false }) => {
   const [show, setShow] = useState(false);
   const display = value ? toHHMM(value) : '';
+  
+  const handlePress = useCallback(() => setShow(true), []);
+  const handleHide = useCallback(() => setShow(false), []);
+  const handleTimeChange = useCallback((e, date) => {
+    setShow(false);
+    if (date) onChange(toHHMM(date));
+  }, [onChange]);
+  
   return (
     <View className="mb-4">
-      <FieldLabel required={false}>{label}</FieldLabel>
+      <FieldLabel required={required}>{label}</FieldLabel>
       <TouchableOpacity
-        onPress={() => setShow(true)}
+        onPress={handlePress}
         className={`border ${error ? 'border-red-500' : 'border-gray-300'} rounded-lg px-3 py-2 bg-white`}
       >
         <Text className={display ? 'text-gray-900' : 'text-gray-400'}>
@@ -128,10 +185,7 @@ const TimeField = ({ label, value, onChange, error }) => {
           mode="time"
           is24Hour
           display="default"
-          onChange={(e, date) => {
-            setShow(false);
-            if (date) onChange(toHHMM(date));
-          }}
+          onChange={handleTimeChange}
         />
       )}
       {Platform.OS === 'web' && show && (
@@ -141,58 +195,110 @@ const TimeField = ({ label, value, onChange, error }) => {
           placeholder="HH:MM"
           value={display}
           onChangeText={onChange}
-          onBlur={() => setShow(false)}
+          onBlur={handleHide}
         />
       )}
       {error ? <Text className="text-red-500 text-xs mt-1">{error}</Text> : null}
     </View>
   );
-};
+});
+TimeField.displayName = 'TimeField';
 
-const SelectField = ({ label, selectedValue, onValueChange, options, placeholder, error }) => (
-  <View className="mb-4">
-    <FieldLabel required>{label}</FieldLabel>
-    <View className={`border ${error ? 'border-red-500' : 'border-gray-300'} rounded-lg overflow-hidden bg-white`}>
-      <Picker
-        selectedValue={selectedValue}
-        onValueChange={(val) => onValueChange(val)}
-      >
-        <Picker.Item label={placeholder} value="" />
-        {options.map(opt => (
-          <Picker.Item key={String(opt.value)} label={String(opt.label)} value={String(opt.value)} />
-        ))}
-      </Picker>
+const SelectField = memo(({ label, selectedValue, onValueChange, options, placeholder, error }) => {
+  const optionItems = useMemo(() => 
+    options.map(opt => (
+      <Picker.Item key={String(opt.value)} label={String(opt.label)} value={String(opt.value)} />
+    )), 
+    [options]
+  );
+  
+  return (
+    <View className="mb-4">
+      <FieldLabel required>{label}</FieldLabel>
+      <View className={`border ${error ? 'border-red-500' : 'border-gray-300'} rounded-lg overflow-hidden bg-white`}>
+        <Picker
+          selectedValue={selectedValue}
+          onValueChange={(val) => onValueChange(val)}
+        >
+          <Picker.Item label={placeholder} value="" />
+          {optionItems}
+        </Picker>
+      </View>
+      {error ? <Text className="text-red-500 text-xs mt-1">{error}</Text> : null}
     </View>
-    {error ? <Text className="text-red-500 text-xs mt-1">{error}</Text> : null}
-  </View>
-);
+  );
+});
+SelectField.displayName = 'SelectField';
 
-const RadioChipsField = ({ label, selectedValue, onValueChange, options, error }) => (
+// Componente optimizado para radio chips
+const RadioChip = memo(({ opt, isSelected, onPress }) => (
+  <TouchableOpacity
+    onPress={onPress}
+    className={`px-4 py-2 rounded-full border-2 ${
+      isSelected 
+        ? 'bg-blue-600 border-blue-600' 
+        : 'bg-white border-gray-300'
+    }`}
+  >
+    <Text className={`font-semibold ${isSelected ? 'text-white' : 'text-gray-700'}`}>
+      {String(opt.label)}
+    </Text>
+  </TouchableOpacity>
+));
+RadioChip.displayName = 'RadioChip';
+
+const RadioChipsField = memo(({ label, selectedValue, onValueChange, options, error }) => (
   <View className="mb-4">
     <FieldLabel required>{label}</FieldLabel>
     <View className="flex-row flex-wrap gap-2 mt-2">
-      {options.map(opt => {
-        const isSelected = String(selectedValue) === String(opt.value);
-        return (
-          <TouchableOpacity
-            key={String(opt.value)}
-            onPress={() => onValueChange(String(opt.value))}
-            className={`px-4 py-2 rounded-full border-2 ${
-              isSelected 
-                ? 'bg-blue-600 border-blue-600' 
-                : 'bg-white border-gray-300'
-            }`}
-          >
-            <Text className={`font-semibold ${isSelected ? 'text-white' : 'text-gray-700'}`}>
-              {String(opt.label)}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
+      {options.map(opt => (
+        <RadioChip
+          key={String(opt.value)}
+          opt={opt}
+          isSelected={String(selectedValue) === String(opt.value)}
+          onPress={() => onValueChange(String(opt.value))}
+        />
+      ))}
     </View>
     {error ? <Text className="text-red-500 text-xs mt-1">{error}</Text> : null}
   </View>
-);
+));
+RadioChipsField.displayName = 'RadioChipsField';
+
+// Componente optimizado para item de bombero en asistencia
+const BomberoAsistenciaItem = memo(({ bombero, presentLugar, presentCuartel, onToggleLugar, onToggleCuartel }) => (
+  <View className="flex-row items-center px-3 py-2 border-b border-gray-100 bg-white">
+    <Text className="flex-1 text-gray-800">{nombreBombero(bombero)}</Text>
+
+    {/* En el lugar */}
+    <View className="w-28 items-center">
+      <TouchableOpacity
+        onPress={onToggleLugar}
+        className={`w-12 h-6 rounded-full ${presentLugar ? 'bg-blue-600' : 'bg-gray-300'}`}
+      >
+        <View className={`w-5 h-5 rounded-full bg-white m-0.5 ${presentLugar ? 'self-end' : 'self-start'}`} />
+      </TouchableOpacity>
+    </View>
+
+    {/* En el cuartel */}
+    <View className="w-28 items-center">
+      <TouchableOpacity
+        onPress={onToggleCuartel}
+        className={`w-12 h-6 rounded-full ${presentCuartel ? 'bg-green-600' : 'bg-gray-300'}`}
+      >
+        <View className={`w-5 h-5 rounded-full bg-white m-0.5 ${presentCuartel ? 'self-end' : 'self-start'}`} />
+      </TouchableOpacity>
+    </View>
+  </View>
+), (prevProps, nextProps) => {
+  // Optimización: solo re-renderizar si cambian los valores relevantes
+  return (
+    prevProps.bombero.id === nextProps.bombero.id &&
+    prevProps.presentLugar === nextProps.presentLugar &&
+    prevProps.presentCuartel === nextProps.presentCuartel
+  );
+});
+BomberoAsistenciaItem.displayName = 'BomberoAsistenciaItem';
 
 export default function CrearParteScreen({ navigation }) {
   const [user, setUser] = useState(null);
@@ -267,16 +373,21 @@ export default function CrearParteScreen({ navigation }) {
   const totalLugar = useMemo(() => Object.values(asistenciaLugar).filter(Boolean).length, [asistenciaLugar]);
   const totalCuartel = useMemo(() => Object.values(asistenciaCuartel).filter(Boolean).length, [asistenciaCuartel]);
   
-  // Filtrar bomberos por búsqueda
+  // Filtrar bomberos por búsqueda - Optimizado
   const filteredBomberos = useMemo(
-    () => bomberos.filter(b => (
-      nombreBombero(b).toLowerCase().includes((searchAsistencia || '').toLowerCase())
-    )),
+    () => {
+      if (!searchAsistencia) return bomberos;
+      const searchLower = searchAsistencia.toLowerCase();
+      return bomberos.filter(b => 
+        nombreBombero(b).toLowerCase().includes(searchLower)
+      );
+    },
     [bomberos, searchAsistencia]
   );
   
-  // Calcular paginación
-  const totalPages = Math.ceil(filteredBomberos.length / ITEMS_PER_PAGE);
+  // Calcular paginación - Optimizado
+  const totalPages = useMemo(() => Math.ceil(filteredBomberos.length / ITEMS_PER_PAGE), [filteredBomberos.length, ITEMS_PER_PAGE]);
+  
   const paginatedBomberos = useMemo(
     () => {
       const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -286,10 +397,17 @@ export default function CrearParteScreen({ navigation }) {
     [filteredBomberos, currentPage]
   );
   
-  // Reset página cuando cambia la búsqueda
+  // Reset página cuando cambia la búsqueda - Optimizado con useCallback
   useEffect(() => {
     setCurrentPage(1);
   }, [searchAsistencia]);
+  
+  // Funciones de navegación de paginación - Optimizadas
+  const goToFirstPage = useCallback(() => setCurrentPage(1), []);
+  const goToLastPage = useCallback(() => setCurrentPage(totalPages), [totalPages]);
+  const goToPrevPage = useCallback(() => setCurrentPage(prev => Math.max(1, prev - 1)), []);
+  const goToNextPage = useCallback(() => setCurrentPage(prev => Math.min(totalPages, prev + 1)), [totalPages]);
+  const goToPage = useCallback((page) => setCurrentPage(page), []);
   
   // Errores
   const [errors, setErrors] = useState({});
@@ -501,6 +619,55 @@ export default function CrearParteScreen({ navigation }) {
   // Validación
   const isPosInt = (v) => Number.isInteger(Number(v)) && Number(v) > 0;
 
+  // Función para mapear errores a tabs
+  const getTabWithErrors = (errors) => {
+    // Tab 0: Datos Generales (companiaId, fecha, horas, región, comuna, calle, bomberoACargoId)
+    const tab0Errors = ['companiaId', 'fecha', 'horaDespacho', 'hora60', 'hora63', 'hora69', 'hora610', 'regionId', 'comunaId', 'calle'];
+    
+    // Tab 1: Tipo de Emergencia (clasificacionId, subtipoId, tipoIncendioId, faseId, inmuebles, vehiculos)
+    const tab1Errors = ['clasificacionId', 'subtipoId', 'tipoIncendioId', 'faseId', 'inmuebles', 'vehiculos'];
+    
+    // Tab 2: Material Mayor
+    const tab2Errors = ['materialMayor'];
+    
+    // Tab 3: Accidentados y Otros Servicios (actualmente sin validaciones obligatorias)
+    const tab3Errors = [];
+    
+    // Tab 4: Asistencia (asistenciaLugar, bomberoACargoId)
+    const tab4Errors = ['asistenciaLugar', 'bomberoACargoId'];
+
+    const errorKeys = Object.keys(errors);
+    
+    // Retornar el primer tab con errores
+    if (errorKeys.some(key => tab0Errors.includes(key))) return 0;
+    if (errorKeys.some(key => tab1Errors.includes(key))) return 1;
+    if (errorKeys.some(key => tab2Errors.includes(key))) return 2;
+    if (errorKeys.some(key => tab3Errors.includes(key))) return 3;
+    if (errorKeys.some(key => tab4Errors.includes(key))) return 4;
+    
+    return null;
+  };
+
+  // Función para verificar si un tab tiene errores
+  const tabHasErrors = (tabIndex, errors) => {
+    const errorKeys = Object.keys(errors);
+    
+    switch(tabIndex) {
+      case 0: // Datos Generales
+        return errorKeys.some(key => ['companiaId', 'fecha', 'horaDespacho', 'hora60', 'hora63', 'hora69', 'hora610', 'regionId', 'comunaId', 'calle'].includes(key));
+      case 1: // Tipo de Emergencia
+        return errorKeys.some(key => ['clasificacionId', 'subtipoId', 'tipoIncendioId', 'faseId', 'inmuebles', 'vehiculos'].includes(key));
+      case 2: // Material Mayor
+        return errorKeys.some(key => ['materialMayor'].includes(key));
+      case 3: // Accidentados y Servicios
+        return false; // No hay validaciones obligatorias en este tab por ahora
+      case 4: // Asistencia
+        return errorKeys.some(key => ['asistenciaLugar', 'bomberoACargoId'].includes(key));
+      default:
+        return false;
+    }
+  };
+
   const validate = () => {
     const nextErrors = {};
 
@@ -591,6 +758,11 @@ export default function CrearParteScreen({ navigation }) {
       nextErrors.vehiculos = vehErrors.join(' ');
     }
 
+    // Validar bombero a cargo (tab Asistencia)
+    if (!bomberoACargoId) {
+      nextErrors.bomberoACargoId = 'Debe seleccionar un bombero a cargo.';
+    }
+
     // Validar idRedactor (usuario autenticado)
     const idRedactor = user?.id ? Number(user.id) : null;
     if (!idRedactor) {
@@ -598,32 +770,48 @@ export default function CrearParteScreen({ navigation }) {
     }
 
     setErrors(nextErrors);
-    return Object.keys(nextErrors).length === 0;
+    return { isValid: Object.keys(nextErrors).length === 0, errors: nextErrors };
   };
 
   const handleSubmit = async () => {
-    if (!validate()) {
-      Alert.alert('Error de validación', 'Por favor complete todos los campos requeridos');
+    const validationResult = validate();
+    
+    if (!validationResult.isValid) {
+      // Obtener el primer tab con errores y navegar a él
+      const firstTabWithError = getTabWithErrors(validationResult.errors);
+      if (firstTabWithError !== null) {
+        setActiveTab(firstTabWithError);
+      }
+      
+      Alert.alert(
+        'Error de validación', 
+        'Por favor complete todos los campos requeridos. Revise las pestañas marcadas en rojo.',
+        [{ text: 'Entendido' }]
+      );
       return;
     }
 
     try {
       setSubmitting(true);
 
-      // Construir fechaHoraDespacho (igual que en web)
+      // Construir fechaHoraDespacho
       const fechaTrim = (fecha || '').trim();
       const horaTrim = (horaDespacho || '').trim();
       let fechaHoraDespacho = null;
-      if (fechaTrim && horaTrim && /^\d{4}-\d{2}-\d{2}$/.test(fechaTrim) && /^\d{2}:\d{2}$/.test(horaTrim)) {
-        const [yy, mm, dd] = fechaTrim.split('-').map(Number);
+      // Validar formato DD/MM/AAAA y HH:MM
+      if (fechaTrim && horaTrim && /^\d{2}\/\d{2}\/\d{4}$/.test(fechaTrim) && /^\d{2}:\d{2}$/.test(horaTrim)) {
+        const [dd, mm, yy] = fechaTrim.split('/').map(Number);
         const [hh, mi] = horaTrim.split(':').map(Number);
         const localDate = new Date(yy, mm - 1, dd, hh, mi, 0, 0);
         fechaHoraDespacho = localDate.toISOString();
       }
 
+      // Convertir fecha de DD/MM/AAAA a YYYY-MM-DD para el backend
+      const fechaISO = fromDDMMYYYY(fecha);
+
       const payload = {
         companiaId: parseInt(companiaId),
-        fecha,
+        fecha: fechaISO,
         horaDespacho,
         fechaHoraDespacho,
         hora6_0: hora60,
@@ -633,8 +821,8 @@ export default function CrearParteScreen({ navigation }) {
         regionId: parseInt(regionId),
         comunaId: parseInt(comunaId),
         calle: calle.trim(),
-        numero: (numero || '').toString().trim() || null,
-        depto: (depto || '').toString().trim() || null,
+        numero: (numero || '').toString().trim() || '',
+        depto: (depto || '').toString().trim() || '',
         referencia: (referencia || '').toString().trim() || '',
         clasificacionId: parseInt(clasificacionId),
         subtipoId: parseInt(subtipoId),
@@ -676,8 +864,8 @@ export default function CrearParteScreen({ navigation }) {
     }
   };
 
-  // Funciones para manejar inmuebles
-  const addInmueble = () => {
+  // Funciones para manejar inmuebles - Optimizadas con useCallback
+  const addInmueble = useCallback(() => {
     setInmuebles(prev => [...prev, {
       id: genId(),
       tipo_construccion: '',
@@ -688,21 +876,21 @@ export default function CrearParteScreen({ navigation }) {
       danos_anexos: '',
       calle: '',
       numero: '',
-      duenos: [], // Ahora es un array
+      dueno: [],
       habitantes: [],
     }]);
-  };
+  }, []);
 
-  const updateInmueble = (idx, next) => {
+  const updateInmueble = useCallback((idx, next) => {
     setInmuebles(prev => prev.map((it, i) => (i === idx ? next : it)));
-  };
+  }, []);
 
-  const removeInmueble = (idx) => {
+  const removeInmueble = useCallback((idx) => {
     setInmuebles(prev => prev.filter((_, i) => i !== idx));
-  };
+  }, []);
 
-  // Funciones para manejar vehículos
-  const addVehiculo = () => {
+  // Funciones para manejar vehículos - Optimizadas con useCallback
+  const addVehiculo = useCallback(() => {
     setVehiculos(prev => [...prev, {
       id: genId(),
       patente: '',
@@ -711,22 +899,22 @@ export default function CrearParteScreen({ navigation }) {
       anio: '',
       color: '',
       danos_vehiculo: '',
-      duenos: [], // Ahora es un array
+      dueno: [],
       chofer: null,
       pasajeros: [],
     }]);
-  };
+  }, []);
 
-  const removeVehiculo = (idx) => {
+  const removeVehiculo = useCallback((idx) => {
     setVehiculos(prev => prev.filter((_, i) => i !== idx));
-  };
+  }, []);
 
-  const updateVehiculo = (idx, next) => {
+  const updateVehiculo = useCallback((idx, next) => {
     setVehiculos(prev => prev.map((it, i) => (i === idx ? next : it)));
-  };
+  }, []);
 
-  // Funciones para manejar material mayor
-  const addUnidad = () => {
+  // Funciones para manejar material mayor - Optimizadas con useCallback
+  const addUnidad = useCallback(() => {
     setMaterialMayor(prev => [...prev, {
       id: genId(),
       unidadId: '',
@@ -736,20 +924,20 @@ export default function CrearParteScreen({ navigation }) {
       kmSalida: '',
       kmLlegada: '',
     }]);
-  };
+  }, []);
 
-  const removeUnidad = (idx) => {
+  const removeUnidad = useCallback((idx) => {
     setMaterialMayor(prev => prev.filter((_, i) => i !== idx));
-  };
+  }, []);
 
-  const updateUnidad = (idx, field, value) => {
+  const updateUnidad = useCallback((idx, field, value) => {
     setMaterialMayor(prev => prev.map((item, i) => 
       i === idx ? { ...item, [field]: value } : item
     ));
-  };
+  }, []);
 
-  // Funciones para manejar accidentados
-  const addAccidentado = () => {
+  // Funciones para manejar accidentados - Optimizadas con useCallback
+  const addAccidentado = useCallback(() => {
     setAccidentados(prev => [...prev, {
       id: genId(),
       companiaId: '',
@@ -759,18 +947,18 @@ export default function CrearParteScreen({ navigation }) {
       comisaria: '',
       acciones: '',
     }]);
-  };
+  }, []);
 
-  const removeAccidentado = (idx) => {
+  const removeAccidentado = useCallback((idx) => {
     setAccidentados(prev => prev.filter((_, i) => i !== idx));
-  };
+  }, []);
 
-  const updateAccidentado = (idx, next) => {
+  const updateAccidentado = useCallback((idx, next) => {
     setAccidentados(prev => prev.map((a, i) => (i === idx ? next : a)));
-  };
+  }, []);
 
   // Cargar bomberos por compañía bajo demanda (para Accidentados)
-  const ensureBomberosForCompania = async (compId) => {
+  const ensureBomberosForCompania = useCallback(async (compId) => {
     const id = String(compId || '');
     if (!id) return;
     if (bomberosByCompania[id]) return; // ya cargado
@@ -789,10 +977,10 @@ export default function CrearParteScreen({ navigation }) {
     } finally {
       setLoadingBomberosByCompania(prev => ({ ...prev, [id]: false }));
     }
-  };
+  }, [bomberosByCompania]);
 
-  // Funciones para manejar otros servicios
-  const addOtroServicio = () => {
+  // Funciones para manejar otros servicios - Optimizadas con useCallback
+  const addOtroServicio = useCallback(() => {
     setOtrosServicios(prev => [...prev, {
       id: genId(),
       servicioId: '',
@@ -801,15 +989,15 @@ export default function CrearParteScreen({ navigation }) {
       personal: '',
       observaciones: '',
     }]);
-  };
+  }, []);
 
-  const removeOtroServicio = (idx) => {
+  const removeOtroServicio = useCallback((idx) => {
     setOtrosServicios(prev => prev.filter((_, i) => i !== idx));
-  };
+  }, []);
 
-  const updateOtroServicio = (idx, next) => {
+  const updateOtroServicio = useCallback((idx, next) => {
     setOtrosServicios(prev => prev.map((s, i) => (i === idx ? next : s)));
-  };
+  }, []);
 
   // Toggle asistencia con useCallback para evitar re-renders
   const toggleLugar = useCallback((id, checked) => {
@@ -822,18 +1010,24 @@ export default function CrearParteScreen({ navigation }) {
     if (checked) setAsistenciaLugar(prev => ({ ...prev, [id]: false }));
   }, []);
 
-  const selectedSubtipo = subtipos.find(s => s.id === parseInt(subtipoId));
-  const hasFuego = !!selectedSubtipo?.contieneFuego;
-  const hasInmuebles = !!selectedSubtipo?.contieneInmuebles;
-  const hasVehiculos = !!selectedSubtipo?.contieneVehiculos;
+  // Memoizar valores derivados
+  const selectedSubtipo = useMemo(() => subtipos.find(s => s.id === parseInt(subtipoId)), [subtipos, subtipoId]);
+  const hasFuego = useMemo(() => !!selectedSubtipo?.contieneFuego, [selectedSubtipo]);
+  const hasInmuebles = useMemo(() => !!selectedSubtipo?.contieneInmuebles, [selectedSubtipo]);
+  const hasVehiculos = useMemo(() => !!selectedSubtipo?.contieneVehiculos, [selectedSubtipo]);
 
-  const tabs = [
+  const tabs = useMemo(() => [
     { key: 'general', label: 'Datos Generales' },
     { key: 'tipo', label: 'Tipo de Emergencia' },
     { key: 'material', label: 'Material Mayor' },
     { key: 'otros', label: 'Accidentados y Servicios' },
     { key: 'asistencia', label: 'Asistencia' },
-  ];
+  ], []);
+  
+  // Callback optimizado para cambiar tabs
+  const handleTabChange = useCallback((idx) => {
+    setActiveTab(idx);
+  }, []);
 
   if (loading) {
     return (
@@ -860,27 +1054,44 @@ export default function CrearParteScreen({ navigation }) {
       {/* Tabs compactos (chip style) */}
 {/* Tabs horizontales scrolleables tipo pestaña */}
 <View className="bg-white border-b border-gray-200 z-10">
-  <ScrollView
+  <FlatList
     horizontal
     showsHorizontalScrollIndicator={false}
     contentContainerStyle={{ paddingHorizontal: 8, gap: 8 }}
-  >
-    {tabs.map((tab, idx) => {
+    data={tabs}
+    keyExtractor={(item) => item.key}
+    removeClippedSubviews={true}
+    maxToRenderPerBatch={5}
+    renderItem={({ item: tab, index: idx }) => {
       const isActive = activeTab === idx;
+      const hasError = tabHasErrors(idx, errors);
       return (
         <TouchableOpacity
           key={tab.key}
-          onPress={() => setActiveTab(idx)}
+          onPress={() => handleTabChange(idx)}
           accessibilityRole="tab"
           accessibilityState={{ selected: isActive }}
-          className="items-center justify-center py-3 px-3 rounded-t-md"
+          className={`items-center justify-center py-3 px-3 rounded-t-md relative ${
+            hasError ? '' : ''
+          }`}
           style={{ minWidth: 96 }} // evita que se aplasten/solapen
         >
+          {/* Indicador de error (badge rojo) */}
+          {hasError && (
+            <View className="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500" />
+          )}
+          
           <Text
             numberOfLines={1}
             ellipsizeMode="tail"
             className={`text-[12px] leading-none ${
-              isActive ? 'text-blue-600 font-semibold' : 'text-gray-600'
+              isActive 
+                ? hasError 
+                  ? 'text-red-600 font-semibold' 
+                  : 'text-blue-600 font-semibold'
+                : hasError
+                  ? 'text-red-500'
+                  : 'text-gray-600'
             }`}
           >
             {tab.label}
@@ -889,13 +1100,17 @@ export default function CrearParteScreen({ navigation }) {
           {/* Indicador inferior */}
           <View
             className={`h-0.5 w-full rounded-full mt-1 ${
-              isActive ? 'bg-blue-600' : 'bg-transparent'
+              isActive 
+                ? hasError 
+                  ? 'bg-red-600' 
+                  : 'bg-blue-600'
+                : 'bg-transparent'
             }`}
           />
         </TouchableOpacity>
       );
-    })}
-  </ScrollView>
+    }}
+  />
 </View>
 
 
@@ -927,27 +1142,27 @@ export default function CrearParteScreen({ navigation }) {
                   <DateField label="Fecha" value={fecha} onChange={setFecha} error={errors.fecha} />
                 </View>
                 <View className="flex-1">
-                  <TimeField label="Hora Despacho" value={horaDespacho} onChange={setHoraDespacho} error={errors.horaDespacho} />
+                  <TimeField label="Hora Despacho" value={horaDespacho} onChange={setHoraDespacho} error={errors.horaDespacho} required={true} />
                 </View>
               </View>
 
               {/* Horas 6-0 y 6-3 en 2 columnas */}
               <View className="flex-row gap-3">
                 <View className="flex-1">
-                  <TimeField label="Hora 6-0" value={hora60} onChange={setHora60} error={errors.hora60} />
+                  <TimeField label="Hora 6-0" value={hora60} onChange={setHora60} error={errors.hora60} required={true} />
                 </View>
                 <View className="flex-1">
-                  <TimeField label="Hora 6-3" value={hora63} onChange={setHora63} />
+                  <TimeField label="Hora 6-3" value={hora63} onChange={setHora63} error={errors.hora63} required={true} />
                 </View>
               </View>
 
               {/* Horas 6-9 y 6-10 en 2 columnas */}
               <View className="flex-row gap-3">
                 <View className="flex-1">
-                  <TimeField label="Hora 6-9" value={hora69} onChange={setHora69} />
+                  <TimeField label="Hora 6-9" value={hora69} onChange={setHora69} error={errors.hora69} required={true} />
                 </View>
                 <View className="flex-1">
-                  <TimeField label="Hora 6-10" value={hora610} onChange={setHora610} />
+                  <TimeField label="Hora 6-10" value={hora610} onChange={setHora610} error={errors.hora610} required={true} />
                 </View>
               </View>
 
@@ -1026,7 +1241,8 @@ export default function CrearParteScreen({ navigation }) {
                     className="border border-gray-300 rounded-lg px-3 py-2"
                     placeholder="Número"
                     value={numero}
-                    onChangeText={setNumero}
+                    onChangeText={(text) => setNumero(text.replace(/[^0-9]/g, ''))}
+                    keyboardType="numeric"
                   />
                 </View>
                 <View className="flex-1 mb-4">
@@ -1153,7 +1369,7 @@ export default function CrearParteScreen({ navigation }) {
                             placeholder="0"
                             keyboardType="numeric"
                             value={String(inm.m2_construccion || '')}
-                            onChangeText={(v)=> updateInmueble(idx, { ...inm, m2_construccion: v.replace(/[^0-9.]/g,'') })}
+                            onChangeText={(v)=> updateInmueble(idx, { ...inm, m2_construccion: v.replace(/[^0-9]/g, '') })}
                           />
                         </View>
                         <View className="flex-1 mb-3">
@@ -1163,7 +1379,7 @@ export default function CrearParteScreen({ navigation }) {
                             placeholder="0"
                             keyboardType="numeric"
                             value={String(inm.m2_afectado || '')}
-                            onChangeText={(v)=> updateInmueble(idx, { ...inm, m2_afectado: v.replace(/[^0-9.]/g,'') })}
+                            onChangeText={(v)=> updateInmueble(idx, { ...inm, m2_afectado: v.replace(/[^0-9]/g, '') })}
                           />
                         </View>
                       </View>
@@ -1210,9 +1426,9 @@ export default function CrearParteScreen({ navigation }) {
                         </View>
                       </View>
 
-                      {/* Dueños */}
-                      <Text className="text-sm font-semibold text-gray-800 mb-2">Dueños</Text>
-                      {(inm.duenos||[]).map((d, di) => (
+                      {/* Dueño */}
+                      <Text className="text-sm font-semibold text-gray-800 mb-2">Dueño</Text>
+                      {(inm.dueno||[]).map((d, di) => (
                         <View key={`${inm.id}-d-${di}`} className="bg-white rounded-lg p-2 mb-2 border border-gray-200">
                           <View className="mb-2">
                             <TextInput
@@ -1220,9 +1436,9 @@ export default function CrearParteScreen({ navigation }) {
                               placeholder="Nombre completo"
                               value={d.nombreCompleto || ''}
                               onChangeText={(v)=> {
-                                const next = [...(inm.duenos||[])];
+                                const next = [...(inm.dueno||[])];
                                 next[di] = { ...(next[di]||{}), nombreCompleto: v };
-                                updateInmueble(idx, { ...inm, duenos: next });
+                                updateInmueble(idx, { ...inm, dueno: next });
                               }}
                             />
                           </View>
@@ -1230,21 +1446,25 @@ export default function CrearParteScreen({ navigation }) {
                             <TextInput
                               className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
                               placeholder="RUN"
+                              keyboardType="number-pad"
+                              maxLength={12}
                               value={d.run || ''}
                               onChangeText={(v)=> {
-                                const next = [...(inm.duenos||[])];
-                                next[di] = { ...(next[di]||{}), run: v };
-                                updateInmueble(idx, { ...inm, duenos: next });
+                                const next = [...(inm.dueno||[])];
+                                next[di] = { ...(next[di]||{}), run: formatRutForDisplay(v) };
+                                updateInmueble(idx, { ...inm, dueno: next });
                               }}
                             />
                             <TextInput
                               className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
                               placeholder="Teléfono"
+                              keyboardType="phone-pad"
+                              maxLength={15}
                               value={d.telefono || ''}
                               onChangeText={(v)=> {
-                                const next = [...(inm.duenos||[])];
-                                next[di] = { ...(next[di]||{}), telefono: v };
-                                updateInmueble(idx, { ...inm, duenos: next });
+                                const next = [...(inm.dueno||[])];
+                                next[di] = { ...(next[di]||{}), telefono: v.replace(/[^0-9+\s]/g, '') };
+                                updateInmueble(idx, { ...inm, dueno: next });
                               }}
                             />
                           </View>
@@ -1253,41 +1473,51 @@ export default function CrearParteScreen({ navigation }) {
                             <Switch
                               value={!!d.esEmpresa}
                               onValueChange={(val)=> {
-                                const next = [...(inm.duenos||[])];
-                                next[di] = { ...(next[di]||{}), esEmpresa: val };
-                                updateInmueble(idx, { ...inm, duenos: next });
+                                const next = [...(inm.dueno||[])];
+                                // Si se marca como empresa, limpiar descripción de gravedad
+                                next[di] = { ...(next[di]||{}), esEmpresa: val, descripcionGravedad: val ? '' : next[di]?.descripcionGravedad };
+                                updateInmueble(idx, { ...inm, dueno: next });
                               }}
                             />
                           </View>
-                          <View className="mb-2">
-                            <Text className="text-sm font-semibold text-gray-700 mb-1">Descripción de gravedad</Text>
-                            <TextInput
-                              className="border border-gray-300 rounded-lg px-3 py-2"
-                              placeholder="Detalle de la gravedad del afectado"
-                              value={d.descripcionGravedad || ''}
-                              onChangeText={(v)=> {
-                                const next = [...(inm.duenos||[])];
-                                next[di] = { ...(next[di]||{}), descripcionGravedad: v };
-                                updateInmueble(idx, { ...inm, duenos: next });
-                              }}
-                            />
-                          </View>
+                          {/* Solo mostrar descripción de gravedad si NO es empresa */}
+                          {!d.esEmpresa && (
+                            <View className="mb-2">
+                              <Text className="text-sm font-semibold text-gray-700 mb-1">Descripción de gravedad</Text>
+                              <TextInput
+                                className="border border-gray-300 rounded-lg px-3 py-2"
+                                placeholder="Detalle de la gravedad del afectado"
+                                value={d.descripcionGravedad || ''}
+                                onChangeText={(v)=> {
+                                  const next = [...(inm.dueno||[])];
+                                  next[di] = { ...(next[di]||{}), descripcionGravedad: v };
+                                  updateInmueble(idx, { ...inm, dueno: next });
+                                }}
+                              />
+                            </View>
+                          )}
                           <View className="items-end">
-                            <TouchableOpacity onPress={()=>{
-                              const next = (inm.duenos||[]).filter((_,i)=> i!==di);
-                              updateInmueble(idx, { ...inm, duenos: next });
-                            }}>
-                              <Text className="text-red-600">Eliminar dueño</Text>
+                            <TouchableOpacity 
+                              onPress={()=>{
+                                const next = (inm.dueno||[]).filter((_,i)=> i!==di);
+                                updateInmueble(idx, { ...inm, dueno: next });
+                              }}
+                              className="bg-red-100 p-2 rounded-lg"
+                            >
+                              <Ionicons name="trash-outline" size={20} color="#DC2626" />
                             </TouchableOpacity>
                           </View>
                         </View>
                       ))}
-                      <TouchableOpacity onPress={()=>{
-                        const next = [...(inm.duenos||[]), { nombreCompleto:'', run:'', telefono:'', esEmpresa: false, descripcionGravedad:'' }];
-                        updateInmueble(idx, { ...inm, duenos: next });
-                      }} className="mb-3">
-                        <Text className="text-blue-600 font-semibold">+ Agregar dueño</Text>
-                      </TouchableOpacity>
+                      {/* Solo mostrar botón si no hay dueño */}
+                      {(inm.dueno||[]).length === 0 && (
+                        <TouchableOpacity onPress={()=>{
+                          const next = [...(inm.dueno||[]), { nombreCompleto:'', run:'', telefono:'', esEmpresa: false, descripcionGravedad:'' }];
+                          updateInmueble(idx, { ...inm, dueno: next });
+                        }} className="mb-3">
+                          <Text className="text-blue-600 font-semibold">+ Agregar dueño</Text>
+                        </TouchableOpacity>
+                      )}
 
                       {/* Habitantes */}
                       <Text className="text-sm font-semibold text-gray-800 mb-2">Habitantes</Text>
@@ -1309,10 +1539,12 @@ export default function CrearParteScreen({ navigation }) {
                             <TextInput
                               className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
                               placeholder="RUN"
+                              keyboardType="number-pad"
+                              maxLength={12}
                               value={h.run || ''}
                               onChangeText={(v)=> {
                                 const next = [...(inm.habitantes||[])];
-                                next[hi] = { ...(next[hi]||{}), run: v };
+                                next[hi] = { ...(next[hi]||{}), run: formatRutForDisplay(v) };
                                 updateInmueble(idx, { ...inm, habitantes: next });
                               }}
                             />
@@ -1332,10 +1564,12 @@ export default function CrearParteScreen({ navigation }) {
                             <TextInput
                               className="border border-gray-300 rounded-lg px-3 py-2"
                               placeholder="Teléfono"
+                              keyboardType="phone-pad"
+                              maxLength={15}
                               value={h.telefono || ''}
                               onChangeText={(v)=> {
                                 const next = [...(inm.habitantes||[])];
-                                next[hi] = { ...(next[hi]||{}), telefono: v };
+                                next[hi] = { ...(next[hi]||{}), telefono: v.replace(/[^0-9+\s]/g, '') };
                                 updateInmueble(idx, { ...inm, habitantes: next });
                               }}
                             />
@@ -1354,11 +1588,14 @@ export default function CrearParteScreen({ navigation }) {
                             />
                           </View>
                           <View className="items-end">
-                            <TouchableOpacity onPress={()=>{
-                              const next = (inm.habitantes||[]).filter((_,i)=> i!==hi);
-                              updateInmueble(idx, { ...inm, habitantes: next });
-                            }}>
-                              <Text className="text-red-600">Eliminar habitante</Text>
+                            <TouchableOpacity 
+                              onPress={()=>{
+                                const next = (inm.habitantes||[]).filter((_,i)=> i!==hi);
+                                updateInmueble(idx, { ...inm, habitantes: next });
+                              }}
+                              className="bg-red-100 p-2 rounded-lg"
+                            >
+                              <Ionicons name="trash-outline" size={20} color="#DC2626" />
                             </TouchableOpacity>
                           </View>
                         </View>
@@ -1433,6 +1670,7 @@ export default function CrearParteScreen({ navigation }) {
                             className="border border-gray-300 rounded-lg px-3 py-2"
                             placeholder="2020"
                             keyboardType="numeric"
+                            maxLength={4}
                             value={String(veh.anio || '')}
                             onChangeText={(v)=> updateVehiculo(idx, { ...veh, anio: v.replace(/[^0-9]/g,'') })}
                           />
@@ -1458,9 +1696,9 @@ export default function CrearParteScreen({ navigation }) {
                         />
                       </View>
 
-                      {/* Dueños */}
-                      <Text className="text-sm font-semibold text-gray-800 mb-2">Dueños</Text>
-                      {(veh.duenos||[]).map((d, di) => (
+                      {/* Dueño */}
+                      <Text className="text-sm font-semibold text-gray-800 mb-2">Dueño</Text>
+                      {(veh.dueno||[]).map((d, di) => (
                         <View key={`${veh.id}-d-${di}`} className="bg-white rounded-lg p-2 mb-2 border border-gray-200">
                           <View className="mb-2">
                             <TextInput
@@ -1468,9 +1706,9 @@ export default function CrearParteScreen({ navigation }) {
                               placeholder="Nombre completo"
                               value={d.nombreCompleto || ''}
                               onChangeText={(v)=> {
-                                const next = [...(veh.duenos||[])];
+                                const next = [...(veh.dueno||[])];
                                 next[di] = { ...(next[di]||{}), nombreCompleto: v };
-                                updateVehiculo(idx, { ...veh, duenos: next });
+                                updateVehiculo(idx, { ...veh, dueno: next });
                               }}
                             />
                           </View>
@@ -1478,21 +1716,25 @@ export default function CrearParteScreen({ navigation }) {
                             <TextInput
                               className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
                               placeholder="RUN"
+                              keyboardType="number-pad"
+                              maxLength={12}
                               value={d.run || ''}
                               onChangeText={(v)=> {
-                                const next = [...(veh.duenos||[])];
-                                next[di] = { ...(next[di]||{}), run: v };
-                                updateVehiculo(idx, { ...veh, duenos: next });
+                                const next = [...(veh.dueno||[])];
+                                next[di] = { ...(next[di]||{}), run: formatRutForDisplay(v) };
+                                updateVehiculo(idx, { ...veh, dueno: next });
                               }}
                             />
                             <TextInput
                               className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
                               placeholder="Teléfono"
+                              keyboardType="phone-pad"
+                              maxLength={15}
                               value={d.telefono || ''}
                               onChangeText={(v)=> {
-                                const next = [...(veh.duenos||[])];
-                                next[di] = { ...(next[di]||{}), telefono: v };
-                                updateVehiculo(idx, { ...veh, duenos: next });
+                                const next = [...(veh.dueno||[])];
+                                next[di] = { ...(next[di]||{}), telefono: v.replace(/[^0-9+\s]/g, '') };
+                                updateVehiculo(idx, { ...veh, dueno: next });
                               }}
                             />
                           </View>
@@ -1501,41 +1743,51 @@ export default function CrearParteScreen({ navigation }) {
                             <Switch
                               value={!!d.esEmpresa}
                               onValueChange={(val)=> {
-                                const next = [...(veh.duenos||[])];
-                                next[di] = { ...(next[di]||{}), esEmpresa: val };
-                                updateVehiculo(idx, { ...veh, duenos: next });
+                                const next = [...(veh.dueno||[])];
+                                // Si se marca como empresa, limpiar descripción de gravedad
+                                next[di] = { ...(next[di]||{}), esEmpresa: val, descripcionGravedad: val ? '' : next[di]?.descripcionGravedad };
+                                updateVehiculo(idx, { ...veh, dueno: next });
                               }}
                             />
                           </View>
-                          <View className="mb-2">
-                            <Text className="text-sm font-semibold text-gray-700 mb-1">Descripción de gravedad</Text>
-                            <TextInput
-                              className="border border-gray-300 rounded-lg px-3 py-2"
-                              placeholder="Detalle de la gravedad del afectado"
-                              value={d.descripcionGravedad || ''}
-                              onChangeText={(v)=> {
-                                const next = [...(veh.duenos||[])];
-                                next[di] = { ...(next[di]||{}), descripcionGravedad: v };
-                                updateVehiculo(idx, { ...veh, duenos: next });
-                              }}
-                            />
-                          </View>
+                          {/* Solo mostrar descripción de gravedad si NO es empresa */}
+                          {!d.esEmpresa && (
+                            <View className="mb-2">
+                              <Text className="text-sm font-semibold text-gray-700 mb-1">Descripción de gravedad</Text>
+                              <TextInput
+                                className="border border-gray-300 rounded-lg px-3 py-2"
+                                placeholder="Detalle de la gravedad del afectado"
+                                value={d.descripcionGravedad || ''}
+                                onChangeText={(v)=> {
+                                  const next = [...(veh.dueno||[])];
+                                  next[di] = { ...(next[di]||{}), descripcionGravedad: v };
+                                  updateVehiculo(idx, { ...veh, dueno: next });
+                                }}
+                              />
+                            </View>
+                          )}
                           <View className="items-end">
-                            <TouchableOpacity onPress={()=>{
-                              const next = (veh.duenos||[]).filter((_,i)=> i!==di);
-                              updateVehiculo(idx, { ...veh, duenos: next });
-                            }}>
-                              <Text className="text-red-600">Eliminar dueño</Text>
+                            <TouchableOpacity 
+                              onPress={()=>{
+                                const next = (veh.dueno||[]).filter((_,i)=> i!==di);
+                                updateVehiculo(idx, { ...veh, dueno: next });
+                              }}
+                              className="bg-red-100 p-2 rounded-lg"
+                            >
+                              <Ionicons name="trash-outline" size={20} color="#DC2626" />
                             </TouchableOpacity>
                           </View>
                         </View>
                       ))}
-                      <TouchableOpacity onPress={()=>{
-                        const next = [...(veh.duenos||[]), { nombreCompleto:'', run:'', telefono:'', esEmpresa: false, descripcionGravedad:'' }];
-                        updateVehiculo(idx, { ...veh, duenos: next });
-                      }} className="mb-3">
-                        <Text className="text-blue-600 font-semibold">+ Agregar dueño</Text>
-                      </TouchableOpacity>
+                      {/* Solo mostrar botón si no hay dueño */}
+                      {(veh.dueno||[]).length === 0 && (
+                        <TouchableOpacity onPress={()=>{
+                          const next = [...(veh.dueno||[]), { nombreCompleto:'', run:'', telefono:'', esEmpresa: false, descripcionGravedad:'' }];
+                          updateVehiculo(idx, { ...veh, dueno: next });
+                        }} className="mb-3">
+                          <Text className="text-blue-600 font-semibold">+ Agregar dueño</Text>
+                        </TouchableOpacity>
+                      )}
 
                       {/* Chofer */}
                       <Text className="text-sm font-semibold text-gray-800 mb-2 mt-3">Chofer (opcional)</Text>
@@ -1553,8 +1805,10 @@ export default function CrearParteScreen({ navigation }) {
                             <TextInput
                               className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
                               placeholder="RUN"
+                              keyboardType="number-pad"
+                              maxLength={12}
                               value={veh.chofer.run || ''}
-                              onChangeText={(v)=> updateVehiculo(idx, { ...veh, chofer: { ...(veh.chofer||{}), run: v } })}
+                              onChangeText={(v)=> updateVehiculo(idx, { ...veh, chofer: { ...(veh.chofer||{}), run: formatRutForDisplay(v) } })}
                             />
                             <TextInput
                               className="w-24 border border-gray-300 rounded-lg px-3 py-2"
@@ -1568,8 +1822,10 @@ export default function CrearParteScreen({ navigation }) {
                             <TextInput
                               className="border border-gray-300 rounded-lg px-3 py-2"
                               placeholder="Teléfono"
+                              keyboardType="phone-pad"
+                              maxLength={15}
                               value={veh.chofer.telefono || ''}
-                              onChangeText={(v)=> updateVehiculo(idx, { ...veh, chofer: { ...(veh.chofer||{}), telefono: v } })}
+                              onChangeText={(v)=> updateVehiculo(idx, { ...veh, chofer: { ...(veh.chofer||{}), telefono: v.replace(/[^0-9+\s]/g, '') } })}
                             />
                           </View>
                           <View className="mb-2">
@@ -1582,8 +1838,11 @@ export default function CrearParteScreen({ navigation }) {
                             />
                           </View>
                           <View className="items-end">
-                            <TouchableOpacity onPress={()=> updateVehiculo(idx, { ...veh, chofer: null })}>
-                              <Text className="text-red-600">Eliminar chofer</Text>
+                            <TouchableOpacity 
+                              onPress={()=> updateVehiculo(idx, { ...veh, chofer: null })}
+                              className="bg-red-100 p-2 rounded-lg"
+                            >
+                              <Ionicons name="trash-outline" size={20} color="#DC2626" />
                             </TouchableOpacity>
                           </View>
                         </View>
@@ -1615,10 +1874,12 @@ export default function CrearParteScreen({ navigation }) {
                             <TextInput
                               className="flex-1 border border-gray-300 rounded-lg px-3 py-2"
                               placeholder="RUN"
+                              keyboardType="number-pad"
+                              maxLength={12}
                               value={p.run || ''}
                               onChangeText={(v)=> {
                                 const next = [...(veh.pasajeros||[])];
-                                next[pi] = { ...(next[pi]||{}), run: v };
+                                next[pi] = { ...(next[pi]||{}), run: formatRutForDisplay(v) };
                                 updateVehiculo(idx, { ...veh, pasajeros: next });
                               }}
                             />
@@ -1638,10 +1899,12 @@ export default function CrearParteScreen({ navigation }) {
                             <TextInput
                               className="border border-gray-300 rounded-lg px-3 py-2"
                               placeholder="Teléfono"
+                              keyboardType="phone-pad"
+                              maxLength={15}
                               value={p.telefono || ''}
                               onChangeText={(v)=> {
                                 const next = [...(veh.pasajeros||[])];
-                                next[pi] = { ...(next[pi]||{}), telefono: v };
+                                next[pi] = { ...(next[pi]||{}), telefono: v.replace(/[^0-9+\s]/g, '') };
                                 updateVehiculo(idx, { ...veh, pasajeros: next });
                               }}
                             />
@@ -1660,11 +1923,14 @@ export default function CrearParteScreen({ navigation }) {
                             />
                           </View>
                           <View className="items-end">
-                            <TouchableOpacity onPress={()=>{
-                              const next = (veh.pasajeros||[]).filter((_,i)=> i!==pi);
-                              updateVehiculo(idx, { ...veh, pasajeros: next });
-                            }}>
-                              <Text className="text-red-600">Eliminar pasajero</Text>
+                            <TouchableOpacity 
+                              onPress={()=>{
+                                const next = (veh.pasajeros||[]).filter((_,i)=> i!==pi);
+                                updateVehiculo(idx, { ...veh, pasajeros: next });
+                              }}
+                              className="bg-red-100 p-2 rounded-lg"
+                            >
+                              <Ionicons name="trash-outline" size={20} color="#DC2626" />
                             </TouchableOpacity>
                           </View>
                         </View>
@@ -1753,7 +2019,7 @@ export default function CrearParteScreen({ navigation }) {
                       className="border border-gray-300 rounded-lg px-3 py-2"
                       placeholder="Número de voluntarios"
                       value={unidad.voluntarios}
-                      onChangeText={(val) => updateUnidad(idx, 'voluntarios', val)}
+                      onChangeText={(val) => updateUnidad(idx, 'voluntarios', val.replace(/[^0-9]/g, ''))}
                       keyboardType="numeric"
                     />
                   </View>
@@ -1765,7 +2031,7 @@ export default function CrearParteScreen({ navigation }) {
                         className="border border-gray-300 rounded-lg px-3 py-2"
                         placeholder="KM"
                         value={unidad.kmSalida}
-                        onChangeText={(val) => updateUnidad(idx, 'kmSalida', val)}
+                        onChangeText={(val) => updateUnidad(idx, 'kmSalida', val.replace(/[^0-9]/g, ''))}
                         keyboardType="numeric"
                       />
                     </View>
@@ -1775,7 +2041,7 @@ export default function CrearParteScreen({ navigation }) {
                         className="border border-gray-300 rounded-lg px-3 py-2"
                         placeholder="KM"
                         value={unidad.kmLlegada}
-                        onChangeText={(val) => updateUnidad(idx, 'kmLlegada', val)}
+                        onChangeText={(val) => updateUnidad(idx, 'kmLlegada', val.replace(/[^0-9]/g, ''))}
                         keyboardType="numeric"
                       />
                     </View>
@@ -1840,8 +2106,10 @@ export default function CrearParteScreen({ navigation }) {
                       <TextInput
                         className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
                         placeholder="RUN/RUT del accidentado"
+                        keyboardType="number-pad"
+                        maxLength={12}
                         value={acc.rut || ''}
-                        onChangeText={(v) => updateAccidentado(idx, { ...acc, rut: v })}
+                        onChangeText={(v) => updateAccidentado(idx, { ...acc, rut: formatRutForDisplay(v) })}
                       />
                     </View>
 
@@ -2015,46 +2283,33 @@ export default function CrearParteScreen({ navigation }) {
                   <Text className="w-28 text-xs font-semibold text-gray-600 text-center">En el cuartel</Text>
                 </View>
 
-                {/* Lista paginada sin scroll interno (más eficiente) */}
-                <View>
-                  {paginatedBomberos.map(b => {
-                    const presentLugar = !!asistenciaLugar[b.id];
-                    const presentCuartel = !!asistenciaCuartel[b.id];
-                    return (
-                      <View key={b.id} className="flex-row items-center px-3 py-2 border-b border-gray-100 bg-white">
-                        <Text className="flex-1 text-gray-800">{nombreBombero(b)}</Text>
-
-                        {/* En el lugar */}
-                        <View className="w-28 items-center">
-                          <TouchableOpacity
-                            onPress={() => toggleLugar(String(b.id), !presentLugar)}
-                            className={`w-12 h-6 rounded-full ${presentLugar ? 'bg-blue-600' : 'bg-gray-300'}`}
-                          >
-                            <View className={`w-5 h-5 rounded-full bg-white m-0.5 ${presentLugar ? 'self-end' : 'self-start'}`} />
-                          </TouchableOpacity>
-                        </View>
-
-                        {/* En el cuartel */}
-                        <View className="w-28 items-center">
-                          <TouchableOpacity
-                            onPress={() => toggleCuartel(String(b.id), !presentCuartel)}
-                            className={`w-12 h-6 rounded-full ${presentCuartel ? 'bg-green-600' : 'bg-gray-300'}`}
-                          >
-                            <View className={`w-5 h-5 rounded-full bg-white m-0.5 ${presentCuartel ? 'self-end' : 'self-start'}`} />
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    );
-                  })}
-
-                  {paginatedBomberos.length === 0 && (
+                {/* Lista paginada con FlatList (más eficiente) */}
+                <FlatList
+                  data={paginatedBomberos}
+                  keyExtractor={(b) => String(b.id)}
+                  scrollEnabled={false}
+                  removeClippedSubviews={true}
+                  maxToRenderPerBatch={10}
+                  updateCellsBatchingPeriod={50}
+                  initialNumToRender={10}
+                  windowSize={5}
+                  ListEmptyComponent={
                     <View className="px-3 py-6">
                       <Text className="text-gray-500 text-sm text-center">
                         {searchAsistencia ? 'No se encontraron bomberos con ese filtro' : 'No hay bomberos disponibles'}
                       </Text>
                     </View>
+                  }
+                  renderItem={({ item: b }) => (
+                    <BomberoAsistenciaItem
+                      bombero={b}
+                      presentLugar={!!asistenciaLugar[b.id]}
+                      presentCuartel={!!asistenciaCuartel[b.id]}
+                      onToggleLugar={() => toggleLugar(String(b.id), !asistenciaLugar[b.id])}
+                      onToggleCuartel={() => toggleCuartel(String(b.id), !asistenciaCuartel[b.id])}
+                    />
                   )}
-                </View>
+                />
               </View>
 
               {/* Controles de paginación mejorados */}
@@ -2063,7 +2318,7 @@ export default function CrearParteScreen({ navigation }) {
                   {/* Navegación principal */}
                   <View className="flex-row justify-between items-center gap-2">
                     <TouchableOpacity
-                      onPress={() => setCurrentPage(1)}
+                      onPress={goToFirstPage}
                       disabled={currentPage === 1}
                       className={`py-2 px-3 rounded-lg border ${
                         currentPage === 1 
@@ -2077,7 +2332,7 @@ export default function CrearParteScreen({ navigation }) {
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      onPress={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      onPress={goToPrevPage}
                       disabled={currentPage === 1}
                       className={`flex-1 py-2 px-4 rounded-lg border ${
                         currentPage === 1 
@@ -2099,7 +2354,7 @@ export default function CrearParteScreen({ navigation }) {
                     </View>
 
                     <TouchableOpacity
-                      onPress={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      onPress={goToNextPage}
                       disabled={currentPage === totalPages}
                       className={`flex-1 py-2 px-4 rounded-lg border ${
                         currentPage === totalPages 
@@ -2115,7 +2370,7 @@ export default function CrearParteScreen({ navigation }) {
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      onPress={() => setCurrentPage(totalPages)}
+                      onPress={goToLastPage}
                       disabled={currentPage === totalPages}
                       className={`py-2 px-3 rounded-lg border ${
                         currentPage === totalPages 
