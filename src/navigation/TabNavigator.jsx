@@ -7,6 +7,7 @@ import HomeScreen from '../screens/Home/HomeScreen';
 import EmergenciasNavigator from './EmergenciasNavigator';
 import DisponibilidadScreen from '../screens/Disponibilidad/DisponibilidadScreen';
 import ProfileScreen from '../screens/Profile/ProfileScreen';
+import MapScreen from '../screens/MapScreen';
 
 /**
  * Recibe:
@@ -44,6 +45,14 @@ export default function TabNavigator({ onLogout, featureFlags = {}, role = 'user
         component: DisponibilidadScreen,
         icon: 'person-circle',
         showWhen: () => featureFlags.disponibilidad !== false, // visible por defecto
+      },
+      {
+        key: 'mapa',
+        name: 'Mapa',
+        label: 'Mapa',
+        component: MapScreen,
+        icon: 'map',
+        showWhen: () => true,
       },
       {
         key: 'perfil',
