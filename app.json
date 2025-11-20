@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "pruebatailwind",
+    "name": "SGO Mobile",
     "slug": "pruebatailwind",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,7 +8,7 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/logo_sistema.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -17,7 +17,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/logo_sistema.png",
         "backgroundColor": "#ffffff"
       },
       "package": "com.jpalma1414.pruebatailwind"

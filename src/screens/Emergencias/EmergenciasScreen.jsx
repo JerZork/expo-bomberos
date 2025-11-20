@@ -107,14 +107,14 @@ export default function EmergenciasScreen({ navigation }) {
       const resp = await getEstadosReportes();
       const data = resp?.data ?? resp;
       const rawArray = Array.isArray(data) ? data : [];
-      
+
       const normalizedEstados = rawArray.map((e) => {
         const id = e?.id ?? e?.idEstado ?? e?.idReporteEstado ?? null;
         const rawKey = e?.codigo ?? e?.key ?? e?.nombre ?? e?.descripcion ?? e;
         const label = safeString(e?.nombre ?? e?.label ?? String(rawKey).toUpperCase());
         const key = String(rawKey).toUpperCase();
         const color = safeString(e?.color) || 'slate';
-        
+
         return { id, key, label, color };
       });
 
@@ -131,7 +131,7 @@ export default function EmergenciasScreen({ navigation }) {
       });
 
       setEstados(sorted);
-      
+
       // Establecer primer estado como activo si no hay uno seleccionado
       if (sorted.length > 0 && !activeEstado) {
         setActiveEstado(sorted[0].key);
@@ -160,7 +160,7 @@ export default function EmergenciasScreen({ navigation }) {
         creador: safeString(x.creador),
         fecha: safeString(x.fecha),
       }));
-      
+
       setItems(normalized);
     } catch (error) {
       console.error('Error al cargar incidentes:', error);
@@ -188,12 +188,12 @@ export default function EmergenciasScreen({ navigation }) {
   // Agrupar partes por estado
   const partesData = useMemo(() => {
     const grouped = {};
-    
+
     // Inicializar grupos con todos los estados
     estados.forEach((estado) => {
       grouped[estado.key] = [];
     });
-    
+
     // Agrupar items por estado
     items.forEach((item) => {
       const estadoKey = item.estado;
@@ -202,7 +202,7 @@ export default function EmergenciasScreen({ navigation }) {
       }
       grouped[estadoKey].push(item);
     });
-    
+
     return grouped;
   }, [items, estados]);
 
@@ -224,9 +224,9 @@ export default function EmergenciasScreen({ navigation }) {
   const filteredPartes = useMemo(() => {
     if (!activeEstado) return [];
     const partes = partesData[activeEstado] || [];
-    
+
     if (!searchText.trim()) return partes;
-    
+
     const search = searchText.toLowerCase();
     return partes.filter((p) => {
       const desc = safeString(p?.detalle?.descripcionPreliminar || p?.titulo).toLowerCase();
@@ -276,13 +276,13 @@ export default function EmergenciasScreen({ navigation }) {
             try {
               setDeleting(true);
               await borrarIncidente(selectedParte.id);
-              
+
               // Actualizar la lista local removiendo el item
               setItems((prevItems) => prevItems.filter((item) => item.id !== selectedParte.id));
-              
+
               // Cerrar el modal
               closeDetail();
-              
+
               Alert.alert('Éxito', 'Parte eliminado correctamente');
             } catch (error) {
               console.error('Error al borrar parte:', error);
@@ -308,7 +308,7 @@ export default function EmergenciasScreen({ navigation }) {
 
   if (loading) {
     return (
-      <SafeAreaView className="flex-1 bg-gray-100 items-center justify-center">
+      <SafeAreaView edges={['top']} className="flex-1 bg-gray-100 items-center justify-center">
         <ActivityIndicator size="large" color="#dc2626" />
         <Text className="mt-4 text-gray-600">Cargando emergencias...</Text>
       </SafeAreaView>
@@ -316,7 +316,7 @@ export default function EmergenciasScreen({ navigation }) {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-100">
+    <SafeAreaView edges={['top']} className="flex-1 bg-gray-100">
       {/* Header */}
       <View className="bg-white border-b border-gray-200 px-4 py-3">
         <View className="flex-row items-center justify-between">
@@ -338,55 +338,54 @@ export default function EmergenciasScreen({ navigation }) {
 
       {/* Tarjetas de filtro de estados — compactas y sin radio */}
       <View className="bg-white border-b border-gray-200 px-4 py-2">
-  <View className="flex-row flex-wrap -mt-1">
-    {estados.map((estado) => {
-      const isActive = activeEstado === estado.key;
-      const count = partesData[estado.key]?.length || 0;
-      const color = getColorStyles(estado.color);
+        <View className="flex-row flex-wrap -mt-1">
+          {estados.map((estado) => {
+            const isActive = activeEstado === estado.key;
+            const count = partesData[estado.key]?.length || 0;
+            const color = getColorStyles(estado.color);
 
-      return (
-        <TouchableOpacity
-          key={estado.key}
-          onPress={() => setActiveEstado(estado.key)}
-          accessibilityRole="radio"
-          accessibilityState={{ selected: isActive }}
-          className={`mr-2 mt-2 px-3 py-1.5 rounded-full border
+            return (
+              <TouchableOpacity
+                key={estado.key}
+                onPress={() => setActiveEstado(estado.key)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: isActive }}
+                className={`mr-2 mt-2 px-3 py-1.5 rounded-full border
             ${isActive ? `${color.border} ${color.bg}` : 'border-gray-300 bg-white'}
             shadow-sm
           `}
-        >
-          <View className="flex-row items-center">
-            <Ionicons
-              name={ICON_MAP[estado.key] || 'document-outline'}
-              size={14}
-              color={isActive ? color.icon : '#6b7280'} // gray-500
-            />
-            <Text
-              className={`ml-1 text-[12px] font-medium ${
-                isActive ? color.text : 'text-gray-700'
-              }`}
-              numberOfLines={1}
-            >
-              {estado.label}
-            </Text>
+              >
+                <View className="flex-row items-center">
+                  <Ionicons
+                    name={ICON_MAP[estado.key] || 'document-outline'}
+                    size={14}
+                    color={isActive ? color.icon : '#6b7280'} // gray-500
+                  />
+                  <Text
+                    className={`ml-1 text-[12px] font-medium ${isActive ? color.text : 'text-gray-700'
+                      }`}
+                    numberOfLines={1}
+                  >
+                    {estado.label}
+                  </Text>
 
-            {/* contador diminuto */}
-            <View
-              className={`ml-2 px-1.5 py-[1px] rounded-full
+                  {/* contador diminuto */}
+                  <View
+                    className={`ml-2 px-1.5 py-[1px] rounded-full
                 ${isActive ? color.bgActive : 'bg-gray-100'}
                 border ${isActive ? color.borderActive : 'border-gray-200'}
               `}
-            >
-              <Text className={`text-[10px] font-bold ${isActive ? 'text-white' : 'text-gray-700'}`}>
-                {count}
-              </Text>
-            </View>
-          </View>
-        </TouchableOpacity>
-      );
-    })}
-  </View>
-</View>
+                  >
+                    <Text className={`text-[10px] font-bold ${isActive ? 'text-white' : 'text-gray-700'}`}>
+                      {count}
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
 
       {/* Búsqueda */}
       <View className="bg-white px-4 py-2 border-b border-gray-200">
@@ -410,11 +409,11 @@ export default function EmergenciasScreen({ navigation }) {
       {/* Lista de partes */}
       <ScrollView
         className="flex-1"
-        contentContainerClassName="p-4"
+        contentContainerClassName="px-4 pt-4 pb-0"
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {filteredPartes.length === 0 ? (
-          <View className="items-center justify-center py-12">
+          <View className="items-center justify-center py-12 ">
             <Ionicons name="folder-open-outline" size={64} color="#ccc" />
             <Text className="text-gray-500 mt-4">
               {searchText ? 'No se encontraron resultados' : 'Sin reportes en este estado'}
@@ -429,7 +428,7 @@ export default function EmergenciasScreen({ navigation }) {
             const estadoKey = safeString(parte?.estado).toUpperCase() || '';
             const estadoColor = stateMetaByKey[estadoKey]?.color || 'slate';
             const colorStyles = getColorStyles(estadoColor);
-            
+
             return (
               <TouchableOpacity
                 key={parte.id}
@@ -447,16 +446,16 @@ export default function EmergenciasScreen({ navigation }) {
                     </View>
                   ) : null}
                 </View>
-                
+
                 <Text className="text-base text-gray-800 font-medium mb-1">{shortDesc}</Text>
-                
+
                 {street ? (
                   <View className="flex-row items-center mt-1">
                     <Ionicons name="location-outline" size={14} color="#666" />
                     <Text className="text-xs text-gray-600 ml-1">{street}</Text>
                   </View>
                 ) : null}
-                
+
                 <View className="flex-row items-center justify-between mt-2">
                   <Text className="text-xs text-gray-500">{safeString(parte?.tipo)}</Text>
                 </View>
@@ -588,21 +587,20 @@ export default function EmergenciasScreen({ navigation }) {
                 {(() => {
                   const estadoKey = safeString(selectedParte?.estado).toUpperCase() || '';
                   const puedeBorrar = estadoKey === 'BORRADOR' || estadoKey === 'CORREGIR';
-                  
+
                   if (puedeBorrar) {
                     return (
                       <TouchableOpacity
                         onPress={handleDelete}
                         disabled={deleting}
-                        className={`py-3 rounded-lg items-center mb-3 ${
-                          deleting ? 'bg-red-400' : 'bg-red-600'
-                        }`}
+                        className={`py-3 rounded-lg items-center mb-3 ${deleting ? 'bg-red-400' : 'bg-red-600'
+                          }`}
                       >
                         <View className="flex-row items-center">
-                          <Ionicons 
-                            name="trash-outline" 
-                            size={20} 
-                            color="#fff" 
+                          <Ionicons
+                            name="trash-outline"
+                            size={20}
+                            color="#fff"
                           />
                           <Text className="text-white font-semibold ml-2">
                             {deleting ? 'Eliminando...' : 'Eliminar parte'}
@@ -613,7 +611,7 @@ export default function EmergenciasScreen({ navigation }) {
                   }
                   return null;
                 })()}
-                
+
                 <TouchableOpacity
                   onPress={closeDetail}
                   className="bg-gray-600 py-3 rounded-lg items-center"
