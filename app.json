@@ -20,7 +20,12 @@
         "foregroundImage": "./assets/logo_sistema.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.jpalma1414.pruebatailwind"
+      "package": "com.jpalma1414.pruebatailwind",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCKCO547LLgdlmiyEf6euElLduDEu1icqk"
+        }
+      }
     },
     "plugins": [
       "./plugins/withCleartext.js"
@@ -31,8 +36,9 @@
     },
     "extra": {
       "eas": {
-        "projectId": "a3510e50-4548-42f4-b0ef-812cecdb1916"
+        "projectId": "cca3c712-1b0f-4acf-a1a6-9f8ee22f3853"
       }
-    }
+    },
+    "owner": "jpalma1402"
   }
 }

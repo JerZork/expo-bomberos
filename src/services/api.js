@@ -1,10 +1,10 @@
 import axios from 'axios';
 
 // Configuración hardcodeada para builds (EAS no soporta bien @env)
-//const API_BASE_URL = 'http://146.83.194.168:11000/api';
+const API_BASE_URL = 'http://146.83.194.168:11000/api';
 //const API_TIMEOUT = 10000;
 
-const API_BASE_URL = 'http://10.130.121.245:3000/api';
+// const API_BASE_URL = 'http://10.130.121.245:3000/api';
 const API_TIMEOUT = 10000;
 
 const apiClient = axios.create({
