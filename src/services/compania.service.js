@@ -2,7 +2,7 @@ import apiClient from './api';
 
 /**
  * Obtiene una compañía por ID
- * @param {number} id - ID de la compañía
+ * @param {number} id - ID de la compañíawww
  * @returns {Promise<Object>} Datos de la compañía
  */
 export const getCompaniaById = async (id) => {
@@ -23,7 +23,7 @@ export const getCompaniaById = async (id) => {
 export const getCompanias = async (params = {}) => {
   try {
     const queryParams = new URLSearchParams();
-    
+
     if (params.nombre) queryParams.append('nombre', params.nombre);
     if (params.email) queryParams.append('email', params.email);
     if (params.telefono) queryParams.append('telefono', params.telefono);
