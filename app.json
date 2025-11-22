@@ -1,14 +1,14 @@
 {
   "expo": {
-    "name": "pruebatailwind",
+    "name": "SGO Mobile",
     "slug": "pruebatailwind",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/logo_sistema.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/logo_sistema.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -17,13 +17,28 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/logo_sistema.png",
         "backgroundColor": "#ffffff"
+      },
+      "package": "com.jpalma1414.pruebatailwind",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCKCO547LLgdlmiyEf6euElLduDEu1icqk"
+        }
       }
     },
+    "plugins": [
+      "./plugins/withCleartext.js"
+    ],
     "web": {
       "favicon": "./assets/favicon.png",
       "bundler": "metro"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "cca3c712-1b0f-4acf-a1a6-9f8ee22f3853"
+      }
+    },
+    "owner": "jpalma1402"
   }
 }
