@@ -2,7 +2,6 @@ import apiClient from './api';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { jwtDecode } from 'jwt-decode';
-import { Alert } from 'react-native';
 
 const AUTH_TOKEN_KEY = 'authToken';
 const USER_DATA_KEY = 'userData';
@@ -16,9 +15,6 @@ export const authService = {
    */
   login: async (run, password) => {
     try {
-      // DEBUG: Mostrar URL que se está usando
-      Alert.alert('DEBUG', `Conectando a: ${apiClient.defaults.baseURL}/auth/login`);
-      
       const response = await apiClient.post('/auth/login', {
         run,
         password,
